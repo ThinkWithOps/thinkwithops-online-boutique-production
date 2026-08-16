@@ -1,0 +1,33 @@
+# Copy to terraform.tfvars and fill in real values. Do not commit terraform.tfvars.
+
+aws_account_id  = "111111111111" # TODO: your AWS account ID
+region          = "us-east-1"
+cluster_name    = "online-boutique-production"
+cluster_version = "1.30"
+
+vpc_cidr = "10.42.0.0/16"
+azs      = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+private_subnet_cidrs = ["10.42.0.0/19", "10.42.32.0/19", "10.42.64.0/19"]
+public_subnet_cidrs  = ["10.42.96.0/24", "10.42.97.0/24", "10.42.98.0/24"]
+single_nat_gateway   = false # set true to save cost in non-HA / dev usage
+
+node_instance_types     = ["m6i.large"]
+node_group_min_size     = 3
+node_group_max_size     = 9
+node_group_desired_size = 3
+node_capacity_type      = "ON_DEMAND"
+
+eks_namespace = "default"
+
+# TODO: the Route53 hosted zone ExternalDNS should manage, e.g. "example.com"
+external_dns_domain_filter = ""
+
+# TODO: "your-github-org/your-repo" -- must match the repo running
+# .github/workflows/aws-eks-deploy.yaml so the OIDC trust policy resolves.
+github_repository = "GoogleCloudPlatform/microservices-demo"
+
+tags = {
+  Owner       = "platform-team"
+  CostCenter  = "online-boutique"
+}

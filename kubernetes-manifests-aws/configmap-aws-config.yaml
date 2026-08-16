@@ -1,0 +1,33 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Non-secret AWS-specific config shared by the addons in ../addons/.
+# Mirrors the pattern of a plain ConfigMap used elsewhere in this repo's
+# kubernetes-manifests/ (no app code reads this directly -- it documents /
+# centralizes the values that get substituted into addons/*/deployment.yaml).
+#
+# TODO: fill in the real values before applying.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-cluster-config
+  namespace: kube-system
+data:
+  cluster-name: "online-boutique-production"
+  aws-region: "us-east-1"
+  # Route53 hosted zone ExternalDNS is allowed to manage. Must match
+  # terraform-aws var.external_dns_domain_filter.
+  external-dns-domain-filter: "<ROUTE53_DOMAIN>" # e.g. "onlineboutique.example.com"
+  # ACM certificate ARN used by the ALB Ingress for TLS termination.
+  alb-acm-certificate-arn: "<ACM_CERTIFICATE_ARN>"

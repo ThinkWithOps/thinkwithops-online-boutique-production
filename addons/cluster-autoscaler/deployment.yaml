@@ -1,0 +1,80 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Cluster Autoscaler with ASG auto-discovery, matching the tags applied to
+# the managed node group's ASG by terraform-aws/eks.tf:
+#   k8s.io/cluster-autoscaler/enabled = "true"
+#   k8s.io/cluster-autoscaler/online-boutique-production = "owned"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      serviceAccountName: cluster-autoscaler
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: cluster-autoscaler
+        image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.30.3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        command:
+        - ./cluster-autoscaler
+        - --v=4
+        - --stderrthreshold=info
+        - --cloud-provider=aws
+        - --skip-nodes-with-local-storage=false
+        - --expander=least-waste
+        - --balance-similar-node-groups
+        - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/online-boutique-production
+        env:
+        - name: AWS_REGION
+          value: us-east-1
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+          limits:
+            cpu: 200m
+            memory: 500Mi
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/ssl/certs/ca-certificates.crt
+          readOnly: true
+      volumes:
+      - name: ssl-certs
+        hostPath:
+          path: /etc/ssl/certs/ca-bundle.crt
+      tolerations: []
+      nodeSelector:
+        kubernetes.io/os: linux

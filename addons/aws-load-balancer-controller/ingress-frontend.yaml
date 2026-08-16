@@ -1,0 +1,49 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Public ALB routing to the `frontend` ClusterIP Service (created by
+# helm-chart/templates/frontend.yaml -- values-aws-production.yaml sets
+# frontend.externalService: false so no redundant LoadBalancer Service is
+# also created). Requires aws-load-balancer-controller to be installed
+# (see values.yaml in this directory) and ExternalDNS
+# (../external-dns/deployment.yaml) if you want the `host` below to resolve.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  namespace: online-boutique
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /_healthz
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # TODO: replace with a real ACM certificate ARN in us-east-1.
+    alb.ingress.kubernetes.io/certificate-arn: "<ACM_CERTIFICATE_ARN>"
+    # Enables ExternalDNS to create/manage a Route53 record for `host` below.
+    external-dns.alpha.kubernetes.io/hostname: "<ROUTE53_DOMAIN>" # e.g. shop.example.com
+spec:
+  ingressClassName: alb
+  rules:
+  - host: "<ROUTE53_DOMAIN>" # TODO: e.g. shop.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80

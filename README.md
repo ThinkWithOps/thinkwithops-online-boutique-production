@@ -1,169 +1,303 @@
-<!-- <p align="center">
-<img src="/src/frontend/static/icons/Hipster_HeroLogoMaroon.svg" width="300" alt="Online Boutique" />
-</p> -->
-![Continuous Integration](https://github.com/GoogleCloudPlatform/microservices-demo/workflows/Continuous%20Integration%20-%20Main/Release/badge.svg)
+# Online Boutique — Production AWS EKS Deployment
 
-**Online Boutique** is a cloud-first microservices demo application.  The application is a
-web-based e-commerce app where users can browse items, add them to the cart, and purchase them.
+> A production-grade AWS DevOps layer (Terraform, EKS, ECR, Helm, GitHub Actions OIDC CI/CD) built on top of Google's Online Boutique microservices demo.
 
-Google uses this application to demonstrate how developers can modernize enterprise applications using Google Cloud products, including: [Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine), [Cloud Service Mesh (CSM)](https://cloud.google.com/service-mesh), [gRPC](https://grpc.io/), [Cloud Operations](https://cloud.google.com/products/operations), [Spanner](https://cloud.google.com/spanner), [Memorystore](https://cloud.google.com/memorystore), [AlloyDB](https://cloud.google.com/alloydb), and [Gemini](https://ai.google.dev/). This application works on any Kubernetes cluster.
+![Terraform](https://img.shields.io/badge/Terraform-1.6+-844FBA?style=flat&logo=terraform&logoColor=white)
+![AWS EKS](https://img.shields.io/badge/AWS-EKS-FF9900?style=flat&logo=amazoneks&logoColor=white)
+![ECR](https://img.shields.io/badge/AWS-ECR-FF9900?style=flat&logo=amazonaws&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30-326CE5?style=flat&logo=kubernetes&logoColor=white)
+![Helm](https://img.shields.io/badge/Helm-3.15+-0F1689?style=flat&logo=helm&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/CI%2FCD-GitHub_Actions_OIDC-2088FF?style=flat&logo=githubactions&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Multi--stage-2496ED?style=flat&logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/App_License-Apache_2.0-green?style=flat)
 
-If you’re using this demo, please **★Star** this repository to show your interest!
+---
 
-**Note to Googlers:** Please fill out the form at [go/microservices-demo](http://go/microservices-demo).
+## Table of Contents
+
+- [Project Description](#project-description)
+- [Attribution](#attribution)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Microservices](#microservices)
+- [Prerequisites](#prerequisites)
+- [How to Deploy](#how-to-deploy)
+- [Project Structure (AWS layer)](#project-structure-aws-layer)
+- [Cost Notes](#cost-notes)
+- [What This Teaches](#what-this-teaches)
+- [Challenges](#challenges)
+- [Cleanup](#cleanup)
+- [GCP Path (original, untouched)](#gcp-path-original-untouched)
+
+---
+
+## Project Description
+
+This repo takes Google's **Online Boutique** — an 11-service gRPC microservices e-commerce demo in Go, C#, Node.js, Python, and Java — and adds a full production AWS deployment layer around it, without touching a single line of application code.
+
+Everything under `terraform-aws/`, `addons/`, `kubernetes-manifests-aws/`, `helm-chart/values-aws-production.yaml`, and `.github/workflows/aws-eks-deploy.yaml` is new, purpose-built infrastructure-as-code. The original GCP/GKE deployment assets (`terraform/`, `kubernetes-manifests/`, `helm-chart/templates/`) ship unmodified alongside it, so both cloud targets coexist in the same repo.
+
+Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR → Helm release → 11/11 pods `Running`, reachable via a live frontend URL (plain Kubernetes `LoadBalancer` Service — no ALB Ingress installed this run, see [Architecture](#architecture)).
+
+---
+
+## Attribution
+
+The application source (`src/*`) and the original GCP/GKE deployment assets are from Google's [**GoogleCloudPlatform/microservices-demo**](https://github.com/GoogleCloudPlatform/microservices-demo) ("Online Boutique"), licensed under [Apache License 2.0](LICENSE). No application code was modified to build this AWS layer.
+
+Only the DevOps/infrastructure layer described in this README is original work added on top.
+
+---
 
 ## Architecture
 
-**Online Boutique** is composed of 11 microservices written in different
-languages that talk to each other over gRPC.
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 40, "rankSpacing": 55}, "themeVariables": {"fontSize": "18px"}}}%%
+flowchart TB
+    Internet(("Internet")):::entry
+    GHA["GitHub Actions\n(aws-eks-deploy.yaml)"]:::entry
+    OIDC["OIDC token\n→ AWS STS AssumeRole"]:::entry
+    DeployRole["IAM Role\ngithub-actions-deploy"]:::entry
 
-[![Architecture of
-microservices](/docs/img/architecture-diagram.png)](/docs/img/architecture-diagram.png)
+    LB["LoadBalancer\n(frontend-external)"]:::entry
+    ECR["Amazon ECR\n12 repos, 1 per service"]:::service
+    EKS["EKS Control Plane\nonline-boutique-production"]:::service
+    NG["EKS Node Group\n2× t3.small"]:::service
 
-Find **Protocol Buffers Descriptions** at the [`./protos` directory](/protos).
+    FE["frontend"]:::service
+    CART["cartservice"]:::service
+    CHK["checkoutservice"]:::service
+    PAY["paymentservice"]:::service
+    SHIP["shippingservice"]:::service
+    CUR["currencyservice"]:::service
+    EMAIL["emailservice"]:::service
+    PROD["productcatalogservice"]:::service
+    REC["recommendationservice"]:::service
+    AD["adservice"]:::service
 
-| Service                                              | Language      | Description                                                                                                                       |
-| ---------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| [frontend](/src/frontend)                           | Go            | Exposes an HTTP server to serve the website. Does not require signup/login and generates session IDs for all users automatically. |
-| [cartservice](/src/cartservice)                     | C#            | Stores the items in the user's shopping cart in Redis and retrieves it.                                                           |
-| [productcatalogservice](/src/productcatalogservice) | Go            | Provides the list of products from a JSON file and ability to search products and get individual products.                        |
-| [currencyservice](/src/currencyservice)             | Node.js       | Converts one money amount to another currency. Uses real values fetched from European Central Bank. It's the highest QPS service. |
-| [paymentservice](/src/paymentservice)               | Node.js       | Charges the given credit card info (mock) with the given amount and returns a transaction ID.                                     |
-| [shippingservice](/src/shippingservice)             | Go            | Gives shipping cost estimates based on the shopping cart. Ships items to the given address (mock)                                 |
-| [emailservice](/src/emailservice)                   | Python        | Sends users an order confirmation email (mock).                                                                                   |
-| [checkoutservice](/src/checkoutservice)             | Go            | Retrieves user cart, prepares order and orchestrates the payment, shipping and the email notification.                            |
-| [recommendationservice](/src/recommendationservice) | Python        | Recommends other products based on what's given in the cart.                                                                      |
-| [adservice](/src/adservice)                         | Java          | Provides text ads based on given context words.                                                                                   |
-| [loadgenerator](/src/loadgenerator)                 | Python/Locust | Continuously sends requests imitating realistic user shopping flows to the frontend.                                              |
+    REDIS[("Redis cache\nredis-cart")]:::data
+    STATE[("S3 + DynamoDB\nTerraform state + lock")]:::data
 
-## Screenshots
+    GHA --> OIDC --> DeployRole
+    DeployRole --> ECR
+    DeployRole --> EKS
+    ECR --> NG
+    EKS --> NG
 
-| Home Page                                                                                                         | Checkout Screen                                                                                                    |
-| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [![Screenshot of store homepage](/docs/img/online-boutique-frontend-1.png)](/docs/img/online-boutique-frontend-1.png) | [![Screenshot of checkout screen](/docs/img/online-boutique-frontend-2.png)](/docs/img/online-boutique-frontend-2.png) |
+    Internet --> LB --> FE
+    FE --> CART --> REDIS
+    FE --> CHK --> PAY
+    CHK --> SHIP
+    CHK --> CUR
+    CHK --> EMAIL
+    FE --> PROD
+    FE --> REC
+    FE --> AD
+    FE --> SHIP
+    FE --> CUR
 
-## Quickstart (GKE)
+    NG -.-> STATE
 
-1. Ensure you have the following requirements:
-   - [Google Cloud project](https://cloud.google.com/resource-manager/docs/creating-managing-projects#creating_a_project).
-   - Shell environment with `gcloud`, `git`, and `kubectl`.
+    classDef entry fill:#a8c8f0,stroke:#4a76b8,stroke-width:1.5px,color:#1a2b3c,rx:10,ry:10
+    classDef service fill:#a9d3a0,stroke:#5a9152,stroke-width:1.5px,color:#1a2b1c,rx:10,ry:10
+    classDef data fill:#f3c98a,stroke:#c98a3a,stroke-width:1.5px,color:#3c2a10,rx:10,ry:10
+```
 
-2. Clone the latest major version.
+### How this flows
 
-   ```sh
-   git clone --depth 1 --branch v0 https://github.com/GoogleCloudPlatform/microservices-demo.git
-   cd microservices-demo/
-   ```
+**Deploy path (blue nodes):** a push to `main` triggers GitHub Actions (`aws-eks-deploy.yaml`), which requests a short-lived OIDC token and exchanges it with AWS STS for temporary credentials — no stored AWS keys anywhere in GitHub Secrets. Those credentials assume the `github-actions-deploy` IAM role, which is scoped to two things: pushing built images to ECR, and deploying to the EKS control plane.
 
-   The `--depth 1` argument skips downloading git history.
+**Traffic path (green nodes):** a request hits the `frontend-external` LoadBalancer — a plain Kubernetes `LoadBalancer` Service, not an ALB Ingress (the ALB controller add-on is provisioned but not installed this run) — and lands on the `frontend` pod. From there: `frontend` fans out to `cartservice` (which reads/writes the Redis cache), `checkoutservice` (which itself calls `paymentservice`, `shippingservice`, `currencyservice`, and `emailservice` to complete an order), plus direct calls to `productcatalogservice`, `recommendationservice`, and `adservice`.
 
-3. Set the Google Cloud project and region and ensure the Google Kubernetes Engine API is enabled.
+**Compute + registry (green nodes, background):** the EKS node group (2× `t3.small`) is what actually runs all 11 pods — the control plane only makes scheduling decisions, it doesn't host workloads itself. Every image running on those nodes was pulled from one of the 12 ECR repositories, one per service.
 
-   ```sh
-   export PROJECT_ID=<PROJECT_ID>
-   export REGION=us-central1
-   gcloud services enable container.googleapis.com \
-     --project=${PROJECT_ID}
-   ```
+**State (amber nodes):** Terraform's own state — the record of what it created — lives in S3 with a DynamoDB lock table, so two people can't `apply` at the same time and corrupt it. This is provisioned by a separate one-time `bootstrap/` step before the main infrastructure apply can even run.
 
-   Substitute `<PROJECT_ID>` with the ID of your Google Cloud project.
+---
 
-4. Create a GKE cluster and get the credentials for it.
+## Tech Stack
 
-   ```sh
-   gcloud container clusters create-auto online-boutique \
-     --project=${PROJECT_ID} --region=${REGION}
-   ```
+| Technology | Role |
+|---|---|
+| Terraform (>= 1.6, `hashicorp/aws` ~> 5.0) | VPC, EKS, ECR, IAM/IRSA, S3+DynamoDB remote state |
+| Amazon EKS (1.30) | Managed Kubernetes control plane, `online-boutique-production` |
+| Amazon ECR | 12 private image repos, one per microservice, lifecycle policies |
+| Amazon VPC | 3-AZ public/private subnets, NAT gateway, IGW |
+| IAM Roles for Service Accounts (IRSA) | Scoped AWS access per Kubernetes ServiceAccount, no node-wide IAM |
+| GitHub Actions + OIDC | Build/push/deploy pipeline, no long-lived AWS keys in CI |
+| Helm 3 | Chart-based deploy, `values-aws-production.yaml` overlay on the existing chart |
+| Docker (multi-stage) | Per-service builds, existing Dockerfiles reused as-is |
+| aws-load-balancer-controller / ExternalDNS / Cluster Autoscaler | Optional add-ons for ALB ingress, Route53 automation, node autoscaling |
 
-   Creating the cluster may take a few minutes.
+---
 
-5. Deploy Online Boutique to the cluster.
+## Microservices
 
-   ```sh
-   kubectl apply -f ./release/kubernetes-manifests.yaml
-   ```
+| Service | Language |
+|---|---|
+| frontend | Go |
+| cartservice | C# |
+| productcatalogservice | Go |
+| currencyservice | Node.js |
+| paymentservice | Node.js |
+| shippingservice | Go |
+| emailservice | Python |
+| checkoutservice | Go |
+| recommendationservice | Python |
+| adservice | Java |
+| loadgenerator | Python/Locust |
+| shoppingassistantservice | Python (optional, Gemini-powered) |
 
-6. Wait for the pods to be ready.
+All communicate over gRPC; contracts live in `protos/`.
 
-   ```sh
-   kubectl get pods
-   ```
+---
 
-   After a few minutes, you should see the Pods in a `Running` state:
+## Prerequisites
 
-   ```
-   NAME                                     READY   STATUS    RESTARTS   AGE
-   adservice-76bdd69666-ckc5j               1/1     Running   0          2m58s
-   cartservice-66d497c6b7-dp5jr             1/1     Running   0          2m59s
-   checkoutservice-666c784bd6-4jd22         1/1     Running   0          3m1s
-   currencyservice-5d5d496984-4jmd7         1/1     Running   0          2m59s
-   emailservice-667457d9d6-75jcq            1/1     Running   0          3m2s
-   frontend-6b8d69b9fb-wjqdg                1/1     Running   0          3m1s
-   loadgenerator-665b5cd444-gwqdq           1/1     Running   0          3m
-   paymentservice-68596d6dd6-bf6bv          1/1     Running   0          3m
-   productcatalogservice-557d474574-888kr   1/1     Running   0          3m
-   recommendationservice-69c56b74d4-7z8r5   1/1     Running   0          3m1s
-   redis-cart-5f59546cdd-5jnqf              1/1     Running   0          2m58s
-   shippingservice-6ccc89f8fd-v686r         1/1     Running   0          2m58s
-   ```
+- AWS account with permissions to create VPC/EKS/IAM/ECR/S3/DynamoDB resources
+- [Terraform](https://developer.hashicorp.com/terraform) >= 1.6
+- [AWS CLI](https://aws.amazon.com/cli/) v2, configured
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) >= 1.30
+- [Helm](https://helm.sh/) >= 3.15
+- [Docker](https://www.docker.com/) for building/pushing images
+- A GitHub repo with OIDC federation (default on github.com) if using the CI workflow
 
-7. Access the web frontend in a browser using the frontend's external IP.
+---
 
-   ```sh
-   kubectl get service frontend-external | awk '{print $4}'
-   ```
+## How to Deploy
 
-   Visit `http://EXTERNAL_IP` in a web browser to access your instance of Online Boutique.
+**1. Bootstrap the Terraform state backend (one time)**
+```bash
+cd terraform-aws/bootstrap
+terraform init
+terraform apply
+terraform output   # note state_bucket / lock_table, copy into ../backend.tf
+```
 
-8. Congrats! You've deployed the default Online Boutique. To deploy a different variation of Online Boutique (e.g., with Google Cloud Operations tracing, Istio, etc.), see [Deploy Online Boutique variations with Kustomize](#deploy-online-boutique-variations-with-kustomize).
+**2. Provision VPC, EKS, ECR, IAM/IRSA**
+```bash
+cd terraform-aws
+cp terraform.tfvars.example terraform.tfvars
+# edit: aws_account_id, github_repository, node sizing
+terraform init
+terraform plan -out=tfplan
+terraform apply "tfplan"
+```
 
-9. Once you are done with it, delete the GKE cluster.
+**3. Point kubectl at the cluster**
+```bash
+aws eks update-kubeconfig --region us-east-1 --name online-boutique-production
+kubectl get nodes
+```
 
-   ```sh
-   gcloud container clusters delete online-boutique \
-     --project=${PROJECT_ID} --region=${REGION}
-   ```
+**4. Build and push all 12 images to ECR**
+```bash
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
 
-   Deleting the cluster may take a few minutes.
+for svc in adservice cartservice checkoutservice currencyservice emailservice \
+           frontend loadgenerator paymentservice productcatalogservice \
+           recommendationservice shippingservice shoppingassistantservice; do
+  ctx="src/$svc"; [ "$svc" = "cartservice" ] && ctx="src/$svc/src"
+  docker build -t <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/$svc:latest "$ctx"
+  docker push <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/$svc:latest
+done
+```
+(`.github/workflows/aws-eks-deploy.yaml` does this automatically per push, via OIDC — no stored AWS keys.)
 
-## Additional deployment options
+**5. Deploy with Helm**
+```bash
+helm upgrade --install online-boutique helm-chart/ \
+  -f helm-chart/values.yaml \
+  -f helm-chart/values-aws-production.yaml \
+  --set images.tag=latest \
+  --set frontend.externalService=true \
+  --namespace online-boutique --create-namespace
+```
+`values-aws-production.yaml` defaults to ALB-mode (`externalService: false`), which requires the aws-load-balancer-controller add-on to be installed (see the "Optional — ALB Ingress" note below). The `--set frontend.externalService=true` override above gets you a plain `LoadBalancer` Service instead — no add-on install required, matches the actual verified deploy this README describes.
 
-- **Terraform**: [See these instructions](/terraform) to learn how to deploy Online Boutique using [Terraform](https://www.terraform.io/intro).
-- **Istio / Cloud Service Mesh**: [See these instructions](/kustomize/components/service-mesh-istio/README.md) to deploy Online Boutique alongside an Istio-backed service mesh.
-- **Non-GKE clusters (Minikube, Kind, etc)**: See the [Development guide](/docs/development-guide.md) to learn how you can deploy Online Boutique on non-GKE clusters.
-- **AI assistant using Gemini**: [See these instructions](/kustomize/components/shopping-assistant/README.md) to deploy a Gemini-powered AI assistant that suggests products to purchase based on an image.
-- **And more**: The [`/kustomize` directory](/kustomize) contains instructions for customizing the deployment of Online Boutique with other variations.
+**6. Get the frontend URL**
+```bash
+kubectl get svc frontend-external -n online-boutique
+# open http://<EXTERNAL-IP> in a browser
+```
 
-## Documentation
+**Optional — ALB Ingress + ExternalDNS + Cluster Autoscaler add-ons** (needs a Route53 domain + ACM cert): see manifests/values under `addons/`.
 
-- [Development](/docs/development-guide.md) to learn how to run and develop this app locally.
+---
 
-## Demos featuring Online Boutique
+## Project Structure (AWS layer)
 
-- [Security hardening of the OnlineBoutique sample apps with the Docker Hardened Images (DHI)](https://medium.com/google-cloud/security-hardening-of-the-onlineboutique-sample-apps-with-docker-hardened-images-dhi-ca1fad348343)
-- [alpine, distroless or scratch?](https://medium.com/google-cloud/alpine-distroless-or-scratch-caac35250e0b)
-- [Platform Engineering in action: Deploy the Online Boutique sample apps with Score and Humanitec](https://medium.com/p/d99101001e69)
-- [The new Kubernetes Gateway API with Istio and Anthos Service Mesh (ASM)](https://medium.com/p/9d64c7009cd)
-- [Use Azure Redis Cache with the Online Boutique sample on AKS](https://medium.com/p/981bd98b53f8)
-- [Sail Sharp, 8 tips to optimize and secure your .NET containers for Kubernetes](https://medium.com/p/c68ba253844a)
-- [Deploy multi-region application with Anthos and Google cloud Spanner](https://medium.com/google-cloud/a2ea3493ed0)
-- [Use Google Cloud Memorystore (Redis) with the Online Boutique sample on GKE](https://medium.com/p/82f7879a900d)
-- [Use Helm to simplify the deployment of Online Boutique, with a Service Mesh, GitOps, and more!](https://medium.com/p/246119e46d53)
-- [How to reduce microservices complexity with Apigee and Anthos Service Mesh](https://cloud.google.com/blog/products/application-modernization/api-management-and-service-mesh-go-together)
-- [gRPC health probes with Kubernetes 1.24+](https://medium.com/p/b5bd26253a4c)
-- [Use Google Cloud Spanner with the Online Boutique sample](https://medium.com/p/f7248e077339)
-- [Seamlessly encrypt traffic from any apps in your Mesh to Memorystore (redis)](https://medium.com/google-cloud/64b71969318d)
-- [Strengthen your app's security with Cloud Service Mesh and Anthos Config Management](https://cloud.google.com/service-mesh/docs/strengthen-app-security)
-- [From edge to mesh: Exposing service mesh applications through GKE Ingress](https://cloud.google.com/architecture/exposing-service-mesh-apps-through-gke-ingress)
-- [Take the first step toward SRE with Cloud Operations Sandbox](https://cloud.google.com/blog/products/operations/on-the-road-to-sre-with-cloud-operations-sandbox)
-- [Deploying the Online Boutique sample application on Cloud Service Mesh](https://cloud.google.com/service-mesh/docs/onlineboutique-install-kpt)
-- [Anthos Service Mesh Workshop: Lab Guide](https://codelabs.developers.google.com/codelabs/anthos-service-mesh-workshop)
-- [KubeCon EU 2019 - Reinventing Networking: A Deep Dive into Istio's Multicluster Gateways - Steve Dake, Independent](https://youtu.be/-t2BfT59zJA?t=982)
-- Google Cloud Next'18 SF
-  - [Day 1 Keynote](https://youtu.be/vJ9OaAqfxo4?t=2416) showing GKE On-Prem
-  - [Day 3 Keynote](https://youtu.be/JQPOPV_VH5w?t=815) showing Stackdriver
-    APM (Tracing, Code Search, Profiler, Google Cloud Build)
-  - [Introduction to Service Management with Istio](https://www.youtube.com/watch?v=wCJrdKdD6UM&feature=youtu.be&t=586)
-- [Google Cloud Next'18 London – Keynote](https://youtu.be/nIq2pkNcfEI?t=3071)
-  showing Stackdriver Incident Response Management
-- [Microservices demo showcasing Go Micro](https://github.com/go-micro/demo)
+```
+terraform-aws/
+├── bootstrap/                    # S3 + DynamoDB state backend (run once, first)
+├── vpc.tf, eks.tf, ecr.tf, iam.tf, backend.tf, variables.tf, outputs.tf
+└── terraform.tfvars.example      # copy to terraform.tfvars, fill in real values
+
+helm-chart/
+└── values-aws-production.yaml    # ECR image repo, IRSA annotations, resource limits — overlay only
+
+kubernetes-manifests-aws/
+├── namespace.yaml, configmap-aws-config.yaml, secret-example.yaml
+├── hpa.yaml                      # HorizontalPodAutoscalers
+└── node-affinity-patch.yaml
+
+addons/
+├── aws-load-balancer-controller/ # IRSA serviceaccount, values, frontend Ingress
+├── external-dns/                 # IRSA serviceaccount, deployment
+└── cluster-autoscaler/           # IRSA serviceaccount, deployment
+
+.github/workflows/
+└── aws-eks-deploy.yaml           # matrix build/push to ECR (OIDC) + helm upgrade --install
+```
+
+---
+
+## Cost Notes
+
+- **EKS control plane**: flat $0.10/hr, no free tier
+- **Node group**: sized to `t3.small` (free-tier-eligible instance class) — accounts restricted to free-tier instance types will reject larger types like `t3.medium`/`m6i.large` at launch
+- **NAT gateway**: single NAT (not 3) to cut cost for demo/non-HA use
+- Rough total: **~$0.20–0.25/hr** running, effectively **$0** once `terraform destroy` is run
+- Recommended workflow: `apply` → verify/demo → `destroy`, rather than leaving the cluster up
+
+---
+
+## What This Teaches
+
+| What Was Built | Skill Demonstrated |
+|---|---|
+| VPC + EKS + ECR + IAM/IRSA in Terraform | AWS infrastructure-as-code from scratch |
+| IRSA roles per add-on (ALB controller, ExternalDNS, Cluster Autoscaler) | Least-privilege AWS access from Kubernetes, no node-wide IAM |
+| GitHub Actions OIDC → AWS role assumption | Keyless CI/CD, no long-lived cloud credentials |
+| Helm overlay pattern (`-f base -f production`) | Layering environment-specific config without forking a chart |
+| Remote state bootstrap (S3 + DynamoDB, chicken-and-egg problem) | Terraform backend design constraints |
+| Free-tier / account-restriction debugging | Reading AWS API errors (`AsgInstanceLaunchFailures`) and adjusting instance types live |
+| TLS interception debugging (AV Web Shield breaking loopback gRPC) | Diagnosing local dev-environment network issues, not just cloud issues |
+
+---
+
+## Challenges
+
+- **Corporate/local AV HTTPS scanning broke Terraform.** AVG's Web Shield intercepted loopback TLS between Terraform core and its provider plugin (`x509: certificate signed by unknown authority` on a *local* gRPC handshake). Fixed by temporarily disabling HTTPS scanning during `plan`/`apply`.
+- **AWS CLI/Terraform SSL errors from corp network TLS interception.** `SSL_CERT_FILE`/`AWS_CA_BUNDLE` pointed at a PEM built from the Windows trusted-root cert store resolved it.
+- **Node group `CREATE_FAILED`: `t3.medium` rejected.** `AsgInstanceLaunchFailures: ... not eligible for Free Tier`. The AWS account was restricted to free-tier instance types only. Switched to `t3.small` (free-tier eligible, 2 vCPU/2GB — still enough for all 11 lightweight services) and re-applied only the node group.
+
+---
+
+## Cleanup
+
+```bash
+cd terraform-aws && terraform destroy
+cd bootstrap && terraform destroy   # only if you're fully done — this deletes remote state
+```
+
+---
+
+## GCP Path (original, untouched)
+
+Google's original GKE/GCP deployment path — `kubernetes-manifests/`, `helm-chart/templates/` (base), `terraform/` (GKE + Memorystore), `kustomize/`, `skaffold.yaml` — ships unmodified in this repo. See [`docs/development-guide.md`](docs/development-guide.md) for that quickstart.
+
+---
+
+**License:** Application code is Apache 2.0, © Google LLC — see [LICENSE](LICENSE). AWS infrastructure code added in this repo follows the same license unless noted otherwise.

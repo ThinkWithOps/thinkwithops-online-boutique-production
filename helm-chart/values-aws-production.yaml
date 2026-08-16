@@ -1,0 +1,194 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# AWS EKS production values overlay for helm-chart/ (chart: onlineboutique).
+#
+# This file does NOT replace helm-chart/values.yaml -- it is layered on top
+# of it:
+#
+#   helm upgrade --install online-boutique helm-chart/ \
+#     -f helm-chart/values.yaml \
+#     -f helm-chart/values-aws-production.yaml \
+#     --namespace online-boutique --create-namespace
+#
+# It only overrides what differs for the AWS/EKS "online-boutique-production"
+# cluster (us-east-1): ECR image repository, resource requests/limits already
+# defined per-service in helm-chart/values.yaml are left as-is (they match
+# the probe/port config baked into helm-chart/templates/*.yaml), IRSA service
+# account annotations, and ALB ingress instead of a bare LoadBalancer Service.
+#
+# TODO before deploying:
+#   - Replace 148622480656 below with your account ID (see
+#     terraform-aws output `ecr_repository_urls` / `aws sts get-caller-identity`).
+#   - Replace <ROUTE53_DOMAIN> / <ACM_CERTIFICATE_ARN> with real values if you
+#     want TLS + ExternalDNS-managed hostnames on the frontend Ingress.
+#   - Replace the *_ROLE_ARN placeholders with the terraform-aws outputs
+#     alb_controller_irsa_role_arn / external_dns_irsa_role_arn /
+#     cluster_autoscaler_irsa_role_arn / ecr_pull_irsa_role_arn.
+
+images:
+  # ECR repository root -- one repo per service underneath, matching
+  # terraform-aws/ecr.tf's var.ecr_repositories and the build matrix in
+  # .github/workflows/aws-eks-deploy.yaml.
+  repository: 148622480656.dkr.ecr.us-east-1.amazonaws.com
+  # Overridden per-deploy by the GitHub Actions workflow
+  # (--set images.tag=$GIT_SHA / the v1.0-eks-deployment tag), leave blank
+  # here to fall back to Chart.AppVersion.
+  tag: ""
+
+serviceAccounts:
+  create: true
+  # IRSA annotation applied to every service's ServiceAccount. Only
+  # cartservice actually needs AWS API access today (none, since it uses
+  # in-cluster redis) -- this is wired to the general-purpose ECR-pull IRSA
+  # role so it's available if a service needs AWS SDK access later without
+  # a helm value change. Narrow this per-service if you need least privilege.
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::148622480656:role/online-boutique-production-ecr-pull-irsa"
+  annotationsOnlyForCartservice: false
+
+networkPolicies:
+  create: true
+
+securityContext:
+  enable: true
+
+seccompProfile:
+  enable: true
+  type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
+# Per-service overrides. Resource requests/limits intentionally match
+# helm-chart/values.yaml (not re-invented) -- only production-relevant
+# additions (nodeSelector/tolerations/topologySpreadConstraints placeholders,
+# frontend.platform) are added here via the "aws" block consumed by
+# kubernetes-manifests-aws/ and addons/ (the base chart templates do not yet
+# read a `nodeSelector` value; see kubernetes-manifests-aws/README for the
+# HPA/affinity manifests that patch these in at the k8s level).
+# ---------------------------------------------------------------------------
+
+adService:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 180Mi
+    limits:
+      cpu: 300m
+      memory: 300Mi
+
+cartService:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+checkoutService:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+currencyService:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+emailService:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+frontend:
+  externalService: false # ALB Ingress (addons/aws-load-balancer-controller/ingress-frontend.yaml) replaces the LoadBalancer Service
+  platform: aws
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+loadGenerator:
+  # Typically disabled in production; enable for load testing only.
+  create: false
+  resources:
+    requests:
+      cpu: 300m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+paymentService:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+productCatalogService:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+recommendationService:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 220Mi
+    limits:
+      cpu: 200m
+      memory: 450Mi
+
+shippingService:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+cartDatabase:
+  type: redis
+  connectionString: "redis-cart:6379"
+  inClusterRedis:
+    create: true
+    name: redis-cart
+    publicRepository: true
+
+shoppingAssistantService:
+  create: false
+  name: shoppingassistantservice

@@ -1,0 +1,44 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# OPTIONAL strategic-merge patch, placeholder for pinning workloads to the
+# managed node group created by terraform-aws/eks.tf (labels.role =
+# "online-boutique-production-worker") and spreading pods across the 3 AZs.
+#
+# helm-chart/templates/*.yaml does not currently expose nodeSelector /
+# affinity / tolerations as chart values, so this is not auto-applied by
+# `helm upgrade`. Apply with `kubectl patch` / `kustomize patches`, or add
+# nodeSelector/affinity blocks directly in helm-chart/templates if you want
+# it templated (out of scope for this AWS layer, which avoids touching the
+# shared chart templates used by the GCP deployment path too).
+#
+# Example (frontend shown; repeat per Deployment as needed):
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: online-boutique
+spec:
+  template:
+    spec:
+      nodeSelector:
+        role: online-boutique-production-worker
+      tolerations: []
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: frontend
