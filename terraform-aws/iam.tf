@@ -208,14 +208,20 @@ data "aws_iam_policy_document" "github_actions_assume" {
     #   gh api repos/<owner>/<repo>/actions/oidc/customization/sub
     # Both the fork-prefixed and plain forms are included below so this works
     # whether or not the repo is (or later becomes) a fork.
+    # A job with `environment: production` set (see .github/workflows/
+    # aws-eks-deploy.yaml's "deploy" job) gets a different sub claim shape
+    # entirely -- "repo:...:environment:production" instead of a ref-based
+    # claim -- so both forms need to be trusted.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
         "repo:${var.github_repository_oidc_sub_prefix}:ref:refs/heads/main",
         "repo:${var.github_repository_oidc_sub_prefix}:ref:refs/tags/v*",
+        "repo:${var.github_repository_oidc_sub_prefix}:environment:production",
         "repo:${var.github_repository}:ref:refs/heads/main",
         "repo:${var.github_repository}:ref:refs/tags/v*",
+        "repo:${var.github_repository}:environment:production",
       ]
     }
   }
