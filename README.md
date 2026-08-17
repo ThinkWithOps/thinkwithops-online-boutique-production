@@ -287,9 +287,32 @@ addons/
 
 ## Cleanup
 
+**Delete the Helm release before running `terraform destroy`.** The frontend's LoadBalancer (and its security group) is created by Kubernetes' own AWS cloud-controller when the Service is applied — not by Terraform — so Terraform has no record of it. If you destroy the EKS cluster first, that LoadBalancer never gets its normal deletion trigger and is orphaned, silently blocking your VPC's subnets and security groups from being deleted. Cleaning that up after the fact means manually finding and deleting the leftover ELB and SG via the AWS CLI/Console before `terraform destroy` can finish.
+
 ```bash
+# 1. Delete the Helm release FIRST — this triggers AWS to clean up its own LoadBalancer/SG
+helm uninstall online-boutique -n online-boutique
+# wait ~30s for the LB to actually disappear, then confirm:
+aws elb describe-load-balancers --region us-east-1   # should be empty (or unrelated to this cluster)
+
+# 2. Then destroy the infrastructure
 cd terraform-aws && terraform destroy
 cd bootstrap && terraform destroy   # only if you're fully done — this deletes remote state
+```
+
+**If you already destroyed the cluster first and `terraform destroy` is stuck** on a subnet/VPC `DependencyViolation` error: find and delete the orphaned ELB and its security group manually, then re-run `terraform destroy`.
+
+```bash
+# Find the leftover ELB (name matches your frontend's external hostname prefix)
+aws elb describe-load-balancers --region us-east-1 --query "LoadBalancerDescriptions[].LoadBalancerName"
+aws elb delete-load-balancer --load-balancer-name <name> --region us-east-1
+
+# Find its security group (named like "k8s-elb-<name>")
+aws ec2 describe-security-groups --filters "Name=vpc-id,Values=<your-vpc-id>" --query "SecurityGroups[].{id:GroupId,name:GroupName}"
+aws ec2 delete-security-group --group-id <sg-id>
+
+# Now re-run
+cd terraform-aws && terraform destroy
 ```
 
 ---
