@@ -317,6 +317,65 @@ cd terraform-aws && terraform destroy
 
 ---
 
+## Command Reference
+
+Every command used across this project's setup, deploy, verification, and teardown, in one place.
+
+**Terraform**
+| Command | Purpose |
+|---|---|
+| `cd terraform-aws/bootstrap && terraform init && terraform apply` | One-time: create the S3 state bucket + DynamoDB lock table |
+| `terraform init` | Initialize the main config against the S3 backend |
+| `terraform plan -out=tfplan` | Preview changes, save the plan |
+| `terraform apply "tfplan"` | Apply the saved plan |
+| `terraform destroy` | Tear down everything this config created |
+| `terraform force-unlock <lock-id>` | Clear a stuck state lock (e.g. after a killed/interrupted apply) |
+| `terraform output` | Show output values (cluster endpoint, ECR URLs, IRSA role ARNs, etc.) |
+
+**AWS CLI — cluster & auth**
+| Command | Purpose |
+|---|---|
+| `aws sts get-caller-identity` | Confirm which AWS account/identity you're authenticated as |
+| `aws eks update-kubeconfig --region us-east-1 --name online-boutique-production` | Point `kubectl` at the cluster |
+| `aws eks describe-nodegroup --cluster-name online-boutique-production --nodegroup-name <name> --query "nodegroup.{status:status,health:health}"` | Check node group status/health |
+| `aws ec2 describe-instance-types --filters "Name=free-tier-eligible,Values=true" --query "InstanceTypes[].InstanceType"` | List instance types your account can actually launch |
+| `aws ec2 describe-instances --filters "Name=tag:eks:cluster-name,Values=online-boutique-production"` | Check whether node EC2 instances actually launched |
+| `aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[].{name:AutoScalingGroupName,desired:DesiredCapacity}"` | Check the node group's underlying ASG desired/running counts |
+
+**AWS CLI — images**
+| Command | Purpose |
+|---|---|
+| `aws ecr get-login-password --region us-east-1 \| docker login --username AWS --password-stdin <account>.dkr.ecr.us-east-1.amazonaws.com` | Authenticate Docker to ECR |
+| `docker build -t <account>.dkr.ecr.us-east-1.amazonaws.com/<service>:latest src/<service>` | Build one service's image |
+| `docker push <account>.dkr.ecr.us-east-1.amazonaws.com/<service>:latest` | Push it to ECR |
+
+**kubectl**
+| Command | Purpose |
+|---|---|
+| `kubectl get nodes` | Confirm nodes are `Ready` |
+| `kubectl get pods -n online-boutique` | Confirm all 11 pods are `Running` |
+| `kubectl get svc frontend-external -n online-boutique` | Get the live frontend URL |
+| `kubectl -n online-boutique rollout status deployment/frontend --timeout=5m` | Wait for a deployment rollout to finish |
+
+**Helm**
+| Command | Purpose |
+|---|---|
+| `helm upgrade --install online-boutique helm-chart/ -f helm-chart/values.yaml -f helm-chart/values-aws-production.yaml --set frontend.externalService=true --namespace online-boutique --create-namespace` | Deploy/update the full release |
+| `helm list -n online-boutique` | Confirm the release is deployed |
+| `helm status online-boutique -n online-boutique` | Full release status |
+| `helm uninstall online-boutique -n online-boutique` | Remove the release (do this **before** `terraform destroy`, see Cleanup above) |
+
+**GitHub Actions / OIDC diagnostics**
+| Command | Purpose |
+|---|---|
+| `gh workflow list -R <owner>/<repo>` | List workflows and their enabled/disabled state |
+| `gh workflow run "<workflow name>" -R <owner>/<repo> --ref main` | Manually trigger a workflow run |
+| `gh run list -R <owner>/<repo> --workflow="<workflow name>" --limit 5` | Recent runs and their status |
+| `gh run view <run-id> -R <owner>/<repo> --log-failed` | Logs for only the failed steps of a run |
+| `gh api repos/<owner>/<repo>/actions/oidc/customization/sub` | Check the actual OIDC subject-claim prefix GitHub sends for this repo (differs for forks — see `terraform-aws/iam.tf`) |
+
+---
+
 ## GCP Path (original, untouched)
 
 Google's original GKE/GCP deployment path — `kubernetes-manifests/`, `helm-chart/templates/` (base), `terraform/` (GKE + Memorystore), `kustomize/`, `skaffold.yaml` — ships unmodified in this repo. See [`docs/development-guide.md`](docs/development-guide.md) for that quickstart.
