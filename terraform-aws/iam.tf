@@ -174,6 +174,17 @@ variable "github_repository" {
   default     = "GoogleCloudPlatform/microservices-demo" # TODO: replace with this fork's actual org/repo
 }
 
+variable "github_repository_oidc_sub_prefix" {
+  type        = string
+  description = <<-EOT
+    The repo segment GitHub actually puts in the OIDC "sub" claim. For most
+    repos this is identical to var.github_repository, but GitHub appends
+    owner/repo numeric IDs for forked repos (fork-safety measure) --
+    check with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub
+  EOT
+  default     = "ThinkWithOps@254184712/thinkwithops-online-boutique-production@1332138512"
+}
+
 data "aws_iam_policy_document" "github_actions_assume" {
   statement {
     effect  = "Allow"
@@ -190,10 +201,19 @@ data "aws_iam_policy_document" "github_actions_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
+    # GitHub customizes the OIDC "sub" claim's repo segment for forked repos
+    # (appends owner/repo numeric IDs, e.g. "ThinkWithOps@254184712/repo@1332138512")
+    # to prevent a fork's workflows from spoofing the upstream repo's identity.
+    # Check the actual value for a given repo with:
+    #   gh api repos/<owner>/<repo>/actions/oidc/customization/sub
+    # Both the fork-prefixed and plain forms are included below so this works
+    # whether or not the repo is (or later becomes) a fork.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
+        "repo:${var.github_repository_oidc_sub_prefix}:ref:refs/heads/main",
+        "repo:${var.github_repository_oidc_sub_prefix}:ref:refs/tags/v*",
         "repo:${var.github_repository}:ref:refs/heads/main",
         "repo:${var.github_repository}:ref:refs/tags/v*",
       ]

@@ -100,9 +100,12 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
+          # ECR repos are IMMUTABLE (terraform-aws/ecr.tf) -- only push the
+          # unique git-sha tag, never a reusable tag like "latest" or a branch
+          # name, since immutable repos reject re-pushing an existing tag.
+          # The Helm deploy step below already references images.tag=$GIT_SHA.
           tags: |
             ${{ steps.ecr-login.outputs.registry }}/${{ matrix.service }}:${{ github.sha }}
-            ${{ steps.ecr-login.outputs.registry }}/${{ matrix.service }}:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
