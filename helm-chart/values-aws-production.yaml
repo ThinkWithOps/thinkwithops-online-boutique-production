@@ -29,7 +29,7 @@
 # account annotations, and ALB ingress instead of a bare LoadBalancer Service.
 #
 # TODO before deploying:
-#   - Replace 148622480656 below with your account ID (see
+#   - Replace 928967253353 below with your account ID (see
 #     terraform-aws output `ecr_repository_urls` / `aws sts get-caller-identity`).
 #   - Replace <ROUTE53_DOMAIN> / <ACM_CERTIFICATE_ARN> with real values if you
 #     want TLS + ExternalDNS-managed hostnames on the frontend Ingress.
@@ -41,7 +41,7 @@ images:
   # ECR repository root -- one repo per service underneath, matching
   # terraform-aws/ecr.tf's var.ecr_repositories and the build matrix in
   # .github/workflows/aws-eks-deploy.yaml.
-  repository: 148622480656.dkr.ecr.us-east-1.amazonaws.com
+  repository: 928967253353.dkr.ecr.us-east-1.amazonaws.com
   # Overridden per-deploy by the GitHub Actions workflow
   # (--set images.tag=$GIT_SHA / the v1.0-eks-deployment tag), leave blank
   # here to fall back to Chart.AppVersion.
@@ -55,7 +55,7 @@ serviceAccounts:
   # role so it's available if a service needs AWS SDK access later without
   # a helm value change. Narrow this per-service if you need least privilege.
   annotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::148622480656:role/online-boutique-production-ecr-pull-irsa"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::928967253353:role/online-boutique-production-ecr-pull-irsa"
   annotationsOnlyForCartservice: false
 
 networkPolicies:

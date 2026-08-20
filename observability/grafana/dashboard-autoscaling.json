@@ -1,0 +1,87 @@
+{
+  "title": "Online Boutique - Load & Autoscaling",
+  "uid": "online-boutique-autoscaling",
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests/sec (frontend, by status code)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(otelcol_receiver_accepted_spans{service_name=\"frontend\"}[1m])) by (status_code)",
+          "legendFormat": "{{status_code}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Pod count per service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(kube_deployment_status_replicas{namespace=\"online-boutique\"}) by (deployment)",
+          "legendFormat": "{{deployment}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Node count (Karpenter + managed node group)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "count(kube_node_info)",
+          "legendFormat": "nodes"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "HPA current vs. target CPU utilization",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "kube_horizontalpodautoscaler_status_current_metrics_average_utilization{namespace=\"online-boutique\"}",
+          "legendFormat": "{{horizontalpodautoscaler}} current"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_target_metric{namespace=\"online-boutique\", metric_name=\"cpu\"}",
+          "legendFormat": "{{horizontalpodautoscaler}} target"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Pod CPU usage by service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"online-boutique\"}[1m])) by (pod)",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Pod memory usage by service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"online-boutique\"}) by (pod)",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

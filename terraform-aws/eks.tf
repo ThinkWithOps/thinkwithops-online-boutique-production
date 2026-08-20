@@ -84,6 +84,12 @@ module "eks" {
   # The caller applying this module is automatically granted cluster-admin.
   enable_cluster_creator_admin_permissions = true
 
+  # Discovery tag consumed by karpenter/nodepool.yaml's EC2NodeClass
+  # securityGroupSelectorTerms.
+  node_security_group_tags = {
+    "karpenter.sh/discovery" = var.cluster_name
+  }
+
   tags = var.tags
 }
 

@@ -155,6 +155,27 @@ resource "aws_iam_role_policy_attachment" "ecr_pull" {
 }
 
 # ---------------------------------------------------------------------------
+# Karpenter (v2 node autoscaler, karpenter/nodepool.yaml) -- controller IRSA
+# role + node IAM role/instance profile for nodes it launches directly (not
+# through an EKS managed node group). Run instead of, not alongside,
+# cluster-autoscaler above to avoid both controllers fighting over scale-down.
+# ---------------------------------------------------------------------------
+module "karpenter" {
+  source  = "terraform-aws-modules/eks/aws//modules/karpenter"
+  version = "~> 20.31"
+
+  cluster_name = module.eks.cluster_name
+
+  enable_v1_permissions = true
+
+  node_iam_role_name               = "${var.cluster_name}-karpenter-node"
+  node_iam_role_use_name_prefix    = false
+  create_pod_identity_association  = true
+
+  tags = var.tags
+}
+
+# ---------------------------------------------------------------------------
 # GitHub Actions OIDC deploy role (used by .github/workflows/aws-eks-deploy.yaml
 # via aws-actions/configure-aws-credentials -- no long-lived AWS access keys)
 # ---------------------------------------------------------------------------

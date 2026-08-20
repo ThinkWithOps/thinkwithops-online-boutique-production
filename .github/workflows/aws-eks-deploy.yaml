@@ -45,7 +45,7 @@ env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: online-boutique-production
   # TODO: fill in with the role ARN from `terraform output github_actions_deploy_role_arn`
-  DEPLOY_ROLE_ARN: arn:aws:iam::148622480656:role/online-boutique-production-github-actions-deploy
+  DEPLOY_ROLE_ARN: arn:aws:iam::928967253353:role/online-boutique-production-github-actions-deploy
 
 jobs:
   build-and-push:

@@ -69,6 +69,16 @@ output "ecr_pull_irsa_role_arn" {
   value = aws_iam_role.ecr_pull.arn
 }
 
+output "karpenter_iam_role_arn" {
+  description = "Controller pod-identity role ARN for the karpenter/ Helm install"
+  value       = module.karpenter.iam_role_arn
+}
+
+output "karpenter_node_iam_role_name" {
+  description = "Node role Karpenter passes to launched EC2 instances"
+  value       = module.karpenter.node_iam_role_name
+}
+
 output "github_actions_deploy_role_arn" {
   description = "Role ARN for aws-actions/configure-aws-credentials in .github/workflows/aws-eks-deploy.yaml"
   value       = aws_iam_role.github_actions_deploy.arn
