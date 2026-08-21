@@ -52,10 +52,10 @@ Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR
 
 ## Video Series
 
-| Part | Tag | Focus |
-|---|---|---|
-| V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
-| V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
+| Part | Tag | Video | Focus |
+|---|---|---|---|
+| V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | [Watch](https://youtu.be/qjnJab8mqcI) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
+| V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | Coming soon | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
 
 ---
 
