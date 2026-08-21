@@ -9,6 +9,11 @@
 ![Helm](https://img.shields.io/badge/Helm-3.15+-0F1689?style=flat&logo=helm&logoColor=white)
 ![GitHub Actions](https://img.shields.io/badge/CI%2FCD-GitHub_Actions_OIDC-2088FF?style=flat&logo=githubactions&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Multi--stage-2496ED?style=flat&logo=docker&logoColor=white)
+![HPA](https://img.shields.io/badge/HPA-Pod_Autoscaling-326CE5?style=flat&logo=kubernetes&logoColor=white)
+![Karpenter](https://img.shields.io/badge/Karpenter-Node_Autoscaling-4285F4?style=flat&logo=kubernetes&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-Monitoring-E6522C?style=flat&logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-Dashboards-F46800?style=flat&logo=grafana&logoColor=white)
+![k6](https://img.shields.io/badge/k6-Load_Testing-7D64FF?style=flat&logo=k6&logoColor=white)
 ![License](https://img.shields.io/badge/App_License-Apache_2.0-green?style=flat)
 
 ---
@@ -16,13 +21,17 @@
 ## Table of Contents
 
 - [Project Description](#project-description)
+- [Video Series](#video-series)
 - [Attribution](#attribution)
-- [Architecture](#architecture)
+- [V1 Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Microservices](#microservices)
+- [V1 — EKS Deployment](#v1--eks-deployment)
 - [Prerequisites](#prerequisites)
 - [How to Deploy](#how-to-deploy)
 - [Project Structure (AWS layer)](#project-structure-aws-layer)
+- [V2 — Load Testing + Autoscaling](#v2--load-testing--autoscaling)
+- [V2 Architecture](#v2-architecture)
 - [Cost Notes](#cost-notes)
 - [What This Teaches](#what-this-teaches)
 - [Challenges](#challenges)
@@ -41,6 +50,15 @@ Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR
 
 ---
 
+## Video Series
+
+| Part | Tag | Focus |
+|---|---|---|
+| V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
+| V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
+
+---
+
 ## Attribution
 
 The application source (`src/*`) and the original GCP/GKE deployment assets are from Google's [**GoogleCloudPlatform/microservices-demo**](https://github.com/GoogleCloudPlatform/microservices-demo) ("Online Boutique"), licensed under [Apache License 2.0](LICENSE). No application code was modified to build this AWS layer.
@@ -48,6 +66,10 @@ The application source (`src/*`) and the original GCP/GKE deployment assets are 
 Only the DevOps/infrastructure layer described in this README is original work added on top.
 
 ---
+
+## V1 — EKS Deployment
+
+VPC → EKS cluster → ECR → Helm release → GitHub Actions OIDC CI/CD. First live deploy, tagged [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) (see [Video Series](#video-series)).
 
 ## Architecture
 
@@ -253,6 +275,114 @@ addons/
 
 ---
 
+## V2 — Load Testing + Autoscaling
+
+Builds on the V1 deploy without touching it — same cluster, same Helm release, three new layers added on top:
+
+- **`kubernetes-manifests-aws/hpa.yaml`** — HorizontalPodAutoscalers for all 10 long-lived Deployments (excludes `loadgenerator`, a batch-style generator, and `shoppingassistantservice`, disabled by default).
+- **`karpenter/`** — node-level autoscaler (NodePool + EC2NodeClass), replacing/supplementing the Cluster Autoscaler add-on.
+- **`k6/`** — load test script exercising the browse → add-to-cart → checkout path, ramping virtual users.
+- **`observability/`** — Prometheus + kube-state-metrics + node-exporter, OpenTelemetry Collector config, and a Grafana dashboard for watching both scale out live.
+
+### V2 Architecture
+
+Same cluster as V1. Three new layers added on top:
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 45}, "themeVariables": {"fontSize": "14px"}}}%%
+flowchart TB
+    Internet(("Internet")):::entry
+    LB["LoadBalancer\n(frontend-external)"]:::entry
+    FE["frontend\nHPA: 3→10"]:::service
+    CART["cartservice\nHPA: 2→8"]:::service
+    CHK["checkoutservice\nHPA: 2→6"]:::service
+    REDIS[("Redis cache\nredis-cart")]:::data
+
+    K6["k6 pod\n(in-cluster load test)"]:::load
+    HPA["HorizontalPodAutoscaler\n10 services\nCPU 70% + Memory 80%"]:::autoscale
+    KARPENTER["Karpenter\nNodePool: t3.small on-demand\nconsolidateAfter: 1m"]:::autoscale
+    PROM["Prometheus\n+ kube-state-metrics\n+ node-exporter"]:::observe
+    GRAFANA["Grafana\nonline-boutique-autoscaling\ndashboard"]:::observe
+    NODES["EKS Nodes\n2 → 8 (under load)"]:::service
+
+    K6 -->|"ramps 0→3000 VUs"| LB
+    Internet --> LB --> FE
+    FE --> CART --> REDIS
+    FE --> CHK
+
+    HPA -->|"scales pods"| FE
+    HPA -->|"scales pods"| CART
+    HPA -->|"scales pods"| CHK
+    KARPENTER -->|"launches nodes"| NODES
+    PROM -->|"metrics"| HPA
+    PROM --> GRAFANA
+
+    classDef entry fill:#a8c8f0,stroke:#4a76b8,stroke-width:1.5px,color:#1a2b3c
+    classDef service fill:#a9d3a0,stroke:#5a9152,stroke-width:1.5px,color:#1a2b1c
+    classDef data fill:#f3c98a,stroke:#c98a3a,stroke-width:1.5px,color:#3c2a10
+    classDef autoscale fill:#d4b8f0,stroke:#7c4dba,stroke-width:1.5px,color:#1a0a3c
+    classDef observe fill:#f0d4a8,stroke:#ba7c4d,stroke-width:1.5px,color:#3c1a0a
+    classDef load fill:#b8f0d4,stroke:#4dba7c,stroke-width:1.5px,color:#0a3c1a
+```
+
+### How V2 adds to V1
+
+**Pod autoscaling (purple nodes):** HorizontalPodAutoscaler watches CPU and memory per service. When average CPU crosses 70%, the HPA controller requests more replicas. Requires metrics-server to be installed — without it HPA shows unknown targets and never scales.
+
+**Node autoscaling (purple nodes):** Karpenter watches for pods stuck in Pending because no existing node has room. It launches a new t3.small on-demand instance in under 60 seconds. When load drops and a node sits underused for 1 minute (`consolidateAfter: 1m`), Karpenter terminates it. Nodes exist exactly as long as they are needed.
+
+**Load test (green node):** k6 runs inside the cluster as a Kubernetes pod, not from a laptop. Traffic originates from inside the same VPC, same network path as real user traffic. Script ramps 0 → 3,000 VUs (written for 100,000 VUs — scaled down to what t3.small nodes can actually sustain).
+
+**Observability (orange nodes):** Prometheus scrapes metrics from every pod, kube-state-metrics for cluster state, node-exporter for node-level metrics. Grafana dashboard shows pod count, node count, and HPA CPU utilization in real time.
+
+### HPA configuration summary
+
+CPU (70% avg utilization) + memory (80% avg utilization) targets on every service, `kubectl apply -f kubernetes-manifests-aws/hpa.yaml`:
+
+| Service | Min | Max |
+|---|---|---|
+| frontend | 3 | 10 |
+| cartservice | 2 | 8 |
+| checkoutservice, productcatalogservice, currencyservice, recommendationservice, adservice, emailservice, paymentservice, shippingservice | 2 | 6 |
+
+Requires the `metrics-server` EKS add-on — install with `kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml` if HPA shows `<unknown>` targets.
+
+### Karpenter node scaling summary
+
+IAM (controller pod-identity role + node role/instance profile) is provisioned in `terraform-aws/iam.tf` (`module.karpenter`), alongside an `eks-pod-identity-agent` EKS add-on (`terraform-aws/eks.tf`) the controller needs to fetch its own AWS credentials in-cluster.
+
+`karpenter/nodepool.yaml` defines a `NodePool` + `EC2NodeClass` restricted to `t3.small` on-demand instances (this account is free-tier-restricted — `t3.medium` gets rejected at launch, same constraint as the V1 managed node group). Consolidation is aggressive (`consolidateAfter: 1m`) so idle nodes get reclaimed quickly once load drops. Install steps: see `karpenter/README.md`.
+
+Verified live: under load, Karpenter scaled the cluster from 2 nodes up to 8 as HPA drove pod counts up (frontend 3→10 replicas, currencyservice/recommendationservice 2→6), then consolidated back down once load receded.
+
+### k6 load test instructions
+
+`k6/100k-users.js` ramps 0 → 100,000 virtual users over ~28 minutes against the frontend Service — written at production scale for the portfolio/demo narrative. Actual VU count you can run in a given moment is bound by real node capacity (a `t3.small`-only NodePool won't sustain literal 100k VUs on a couple of nodes) — scale the `stages` targets down for a live run on a small cluster, keeping the same ramp shape.
+
+### Commands to run the load test
+
+```bash
+# In-cluster (recommended — avoids local network/machine being the bottleneck)
+kubectl create namespace k6 --dry-run=client -o yaml | kubectl apply -f -
+kubectl create configmap k6-script -n k6 --from-file=k6/100k-users.js
+kubectl run k6 -n k6 --image=grafana/k6:latest --restart=Never \
+  --overrides='{"spec":{"containers":[{"name":"k6","image":"grafana/k6:latest","command":["k6","run","/scripts/100k-users.js"],"env":[{"name":"FRONTEND_URL","value":"http://frontend.online-boutique.svc.cluster.local"}],"volumeMounts":[{"name":"script","mountPath":"/scripts"}]}],"volumes":[{"name":"script","configMap":{"name":"k6-script"}}]}}'
+kubectl -n k6 logs -f k6
+
+# Watch the reaction live
+kubectl get hpa -n online-boutique -w
+kubectl get nodes -w
+kubectl get nodeclaims
+
+# Grafana dashboard
+kubectl -n monitoring port-forward svc/grafana 3000:80
+# open http://localhost:3000/d/online-boutique-autoscaling
+```
+
+See `observability/README.md` for the full Prometheus/Grafana/OTel install order, and `k6/README.md` / `karpenter/README.md` for more detail on each piece.
+
+---
+
 ## Cost Notes
 
 - **EKS control plane**: flat $0.10/hr, no free tier
@@ -274,6 +404,11 @@ addons/
 | Remote state bootstrap (S3 + DynamoDB, chicken-and-egg problem) | Terraform backend design constraints |
 | Free-tier / account-restriction debugging | Reading AWS API errors (`AsgInstanceLaunchFailures`) and adjusting instance types live |
 | TLS interception debugging (AV Web Shield breaking loopback gRPC) | Diagnosing local dev-environment network issues, not just cloud issues |
+| HPA on 10 services | Pod autoscaling on real CPU + memory metrics |
+| Karpenter NodePool | On-demand node provisioning + consolidation |
+| k6 in-cluster load test | Load testing without local network bottleneck |
+| Prometheus + Grafana | Live proof of autoscaling — not just YAML |
+| metrics-server dependency | Understanding hidden add-on requirements |
 
 ---
 
@@ -373,6 +508,39 @@ Every command used across this project's setup, deploy, verification, and teardo
 | `gh run list -R <owner>/<repo> --workflow="<workflow name>" --limit 5` | Recent runs and their status |
 | `gh run view <run-id> -R <owner>/<repo> --log-failed` | Logs for only the failed steps of a run |
 | `gh api repos/<owner>/<repo>/actions/oidc/customization/sub` | Check the actual OIDC subject-claim prefix GitHub sends for this repo (differs for forks — see `terraform-aws/iam.tf`) |
+
+**HPA / metrics-server (V2)**
+| Command | Purpose |
+|---|---|
+| `kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml` | Install metrics-server (required — HPA shows `<unknown>` targets without it) |
+| `kubectl apply -f kubernetes-manifests-aws/hpa.yaml` | Apply HorizontalPodAutoscalers for all 10 services |
+| `kubectl get hpa -n online-boutique` | Check current CPU/memory utilization vs. targets, and replica counts |
+| `kubectl get hpa -n online-boutique -w` | Watch replica counts change live during load |
+
+**Karpenter (V2)**
+| Command | Purpose |
+|---|---|
+| `helm install karpenter oci://public.ecr.aws/karpenter/karpenter --version "1.1.0" --namespace kube-system --set settings.clusterName=online-boutique-production --set settings.interruptionQueue=Karpenter-online-boutique-production --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=<karpenter_iam_role_arn>` | Install the Karpenter controller |
+| `kubectl apply -f karpenter/nodepool.yaml` | Apply the NodePool + EC2NodeClass |
+| `kubectl get nodeclaims` | Karpenter's own record of nodes it has launched, and their status |
+| `kubectl get nodes -w` | Watch node count change live as Karpenter scales |
+| `kubectl -n kube-system logs -l app.kubernetes.io/name=karpenter --tail=50` | Karpenter controller logs (launch failures, consolidation decisions) |
+
+**k6 load test (V2)**
+| Command | Purpose |
+|---|---|
+| `kubectl create namespace k6 --dry-run=client -o yaml \| kubectl apply -f -` | Create the k6 namespace |
+| `kubectl create configmap k6-script -n k6 --from-file=k6/100k-users.js` | Load the test script into the cluster |
+| `kubectl apply -f k6/k6-pod.yaml` | Launch the k6 pod in-cluster |
+| `kubectl -n k6 logs -f k6` | Stream VU ramp and iteration output live |
+
+**Prometheus / Grafana (V2)**
+| Command | Purpose |
+|---|---|
+| `helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace -f observability/prometheus/values.yaml` | Install Prometheus + kube-state-metrics + node-exporter + Alertmanager |
+| `helm install grafana grafana/grafana --namespace monitoring` | Install standalone Grafana |
+| `kubectl -n monitoring port-forward svc/grafana 3000:80` | Access Grafana locally at `http://localhost:3000` |
+| `kubectl -n monitoring get pods` | Confirm the full observability stack is `Running` |
 
 ---
 

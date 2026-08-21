@@ -47,6 +47,9 @@ module "eks" {
       most_recent              = true
       service_account_role_arn = module.ebs_csi_irsa_role.iam_role_arn
     }
+    eks-pod-identity-agent = {
+      most_recent = true
+    }
   }
 
   eks_managed_node_group_defaults = {

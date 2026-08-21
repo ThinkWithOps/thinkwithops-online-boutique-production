@@ -1,0 +1,50 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# In-cluster k6 pod. Reads the script from the k6-script ConfigMap
+# (see k6/README.md for how to create it from k6/100k-users.js).
+# Resource requests are sized for a t3.small-only NodePool -- raise them if
+# running against bigger nodes, but a single k6 process still cannot
+# realistically sustain 100,000 VUs; scale the script's stage targets down
+# to match whatever capacity your cluster actually has.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: k6
+  namespace: k6
+  labels:
+    app: k6
+spec:
+  restartPolicy: Never
+  containers:
+  - name: k6
+    image: grafana/k6:latest
+    command: ["k6", "run", "/scripts/100k-users.js"]
+    env:
+    - name: FRONTEND_URL
+      value: "http://frontend.online-boutique.svc.cluster.local"
+    resources:
+      requests:
+        cpu: 500m
+        memory: 700Mi
+      limits:
+        cpu: "1"
+        memory: 1200Mi
+    volumeMounts:
+    - name: script
+      mountPath: /scripts
+  volumes:
+  - name: script
+    configMap:
+      name: k6-script
