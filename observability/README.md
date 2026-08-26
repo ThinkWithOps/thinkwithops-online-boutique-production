@@ -1,4 +1,4 @@
-# Observability stack (v2: load testing & autoscaling)
+# Observability stack (v2: autoscaling metrics, v3: full SRE/incident-response layer)
 
 Metrics stack backing `karpenter/`, `kubernetes-manifests-aws/hpa.yaml`, and
 `k6/` -- lets you *watch* autoscaling happen during a load test instead of
@@ -65,13 +65,38 @@ all local, no cloud dependency. Tag: `v3.0-sre-observability`.
 | `../docs/runbooks/` | One runbook per alert above |
 | `../scripts/debug/` | kubectl helper scripts for the 4 incident types the alerts cover |
 
+### Prereq: get the app itself running on minikube
+
+V1/V2's Helm install steps target ECR-hosted images on EKS. On minikube
+there's no ECR/build step needed at all — `helm-chart/values.yaml`'s
+default `images.repository` already points at Google's own public image
+registry, so the base chart deploys as-is with no AWS overlay:
+
+```sh
+minikube start --cpus=4 --memory=8192   # observability stack below needs
+                                          # the extra headroom -- Loki, Tempo,
+                                          # Prometheus, Grafana, Alertmanager,
+                                          # Promtail all running at once
+
+kubectl create namespace online-boutique --dry-run=client -o yaml | kubectl apply -f -
+
+helm install online-boutique helm-chart/ \
+  --namespace online-boutique
+
+kubectl -n online-boutique get pods -w   # wait for all 11 to be Running
+
+# Access the storefront (minikube has no cloud LoadBalancer)
+minikube service frontend-external -n online-boutique
+# or: kubectl -n online-boutique port-forward svc/frontend-external 8080:80
+```
+
+No `values-aws-production.yaml` overlay, no IRSA annotations, no ECR login
+-- those are AWS-specific and don't apply here. Once `kubectl get pods`
+shows 11/11 `Running`, move on to the observability stack below.
+
 ### Install order (minikube)
 
 ```sh
-# Prereqs: minikube start --cpus=4 --memory=8192 (observability stack is
-# heavier than v1/v2 alone -- Loki, Tempo, Prometheus, Grafana, Alertmanager,
-# Promtail all running at once)
-
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
