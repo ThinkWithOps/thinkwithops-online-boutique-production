@@ -18,6 +18,14 @@
 # to additionally expose a Prometheus-scrapeable metrics endpoint consumed by
 # observability/prometheus/values.yaml's additionalScrapeConfigs).
 #
+# v3 additions (SRE/observability layer, minikube target):
+# - traces now export to Tempo (observability/tempo/) instead of just logging
+# - the `spanmetrics` connector derives RED metrics (request rate, error
+#   rate, p50/p95/p99 latency) FROM the traces themselves -- the app never
+#   exposed a native http_requests_total/duration metric, so this is the
+#   only way to get real latency/error-rate numbers for the Prometheus
+#   alert rules in observability/prometheus/alert-rules.yaml
+#
 # Apply:
 #   kubectl create configmap otel-collector-config -n online-boutique \
 #     --from-file=config.yaml=observability/otel-collector/config.yaml \
@@ -32,6 +40,20 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+connectors:
+  # Derives RED (Rate/Errors/Duration) metrics from span data. Emits:
+  #   traces_spanmetrics_calls_total{service, span_name, status_code}
+  #   traces_spanmetrics_latency_bucket{service, span_name, status_code}
+  spanmetrics:
+    namespace: traces_spanmetrics
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
+    dimensions:
+      - name: http.status_code
+      - name: service.name
+    metrics_flush_interval: 15s
+
 processors:
   batch: {}
   memory_limiter:
@@ -43,6 +65,10 @@ exporters:
     endpoint: 0.0.0.0:8889
     const_labels:
       cluster: online-boutique-production
+  otlp/tempo:
+    endpoint: tempo.monitoring.svc.cluster.local:4317
+    tls:
+      insecure: true
   logging:
     loglevel: warn
 
@@ -51,8 +77,8 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [logging]
+      exporters: [otlp/tempo, spanmetrics, logging]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, spanmetrics]
       processors: [memory_limiter, batch]
       exporters: [prometheus, logging]

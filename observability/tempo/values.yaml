@@ -1,0 +1,56 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Values overlay for the `grafana/tempo` Helm chart -- single-binary mode
+# (not tempo-distributed), local filesystem storage. This is the only mode
+# that makes sense on a single-node minikube cluster with no object store.
+#
+# Receives traces from the existing otel-collector Deployment (see
+# observability/otel-collector/config.yaml, which exports OTLP to
+# tempo.monitoring.svc.cluster.local:4317 alongside its existing Prometheus
+# metrics + spanmetrics pipeline).
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   helm install tempo grafana/tempo \
+#     --namespace monitoring --create-namespace \
+#     -f observability/tempo/values.yaml
+
+tempo:
+  retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 300m
+    memory: 512Mi
+
+# OTLP gRPC (4317) and HTTP (4318) receivers are enabled by default in this
+# chart -- no override needed, the otel-collector's tempo exporter targets
+# tempo.monitoring.svc.cluster.local:4317 directly.

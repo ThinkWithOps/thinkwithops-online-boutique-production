@@ -1,0 +1,92 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Values overlay for the `grafana/loki-stack` Helm chart (Loki + Promtail
+# bundled together) -- centralized logging for all 11 online-boutique
+# services on a single-node minikube cluster.
+#
+# Single-binary Loki (filesystem storage, no S3/GCS/object-store dependency)
+# -- this is the only mode that makes sense with no cloud dependencies.
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   helm install loki grafana/loki-stack \
+#     --namespace monitoring --create-namespace \
+#     -f observability/loki/values.yaml
+
+loki:
+  enabled: true
+  isDefault: true
+  persistence:
+    enabled: true
+    size: 5Gi
+  config:
+    auth_enabled: false
+    limits_config:
+      retention_period: 24h
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 24h
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+promtail:
+  enabled: true
+  config:
+    snippets:
+      # Scrape every pod in the online-boutique namespace + the
+      # observability stack's own pods, keyed by k8s labels so log lines
+      # are queryable in Grafana by {namespace="online-boutique", app="cartservice"}.
+      pipelineStages:
+        - cri: {}
+      scrapeConfigs: |
+        - job_name: kubernetes-pods
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_node_name]
+              target_label: node
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+            - source_labels: [__meta_kubernetes_pod_label_app]
+              target_label: app
+            - source_labels: [__meta_kubernetes_pod_name]
+              target_label: pod
+            - source_labels: [__meta_kubernetes_pod_container_name]
+              target_label: container
+            - source_labels: [__meta_kubernetes_namespace]
+              action: keep
+              regex: online-boutique|monitoring
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 128Mi
+
+# grafana bundled in loki-stack is left disabled here -- the same
+# kube-prometheus-stack-adjacent Grafana instance (see observability/grafana/)
+# is reused as the single pane for metrics + logs + traces, wired to this
+# Loki instance as a second datasource.
+grafana:
+  enabled: false

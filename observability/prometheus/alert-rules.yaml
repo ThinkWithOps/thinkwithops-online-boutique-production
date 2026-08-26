@@ -1,0 +1,101 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# PrometheusRule CRD -- picked up automatically by kube-prometheus-stack's
+# Prometheus Operator (ruleSelector defaults to matching any PrometheusRule
+# in the cluster, see prometheus/values.yaml). Latency and error-rate rules
+# read the traces_spanmetrics_* series the otel-collector's spanmetrics
+# connector emits (observability/otel-collector/config.yaml) -- the app has
+# no native RED metrics, so these are derived from trace data instead.
+#
+# Each alert here has a matching runbook in /docs/runbooks/ -- the
+# `runbook_url` annotation is what Alertmanager/Slack surfaces to the
+# on-call person so they don't start from zero.
+#
+# Apply:
+#   kubectl apply -f observability/prometheus/alert-rules.yaml -n monitoring
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: online-boutique-sre-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: online-boutique.latency
+      rules:
+        - alert: HighRequestLatency
+          expr: >
+            histogram_quantile(0.95,
+              sum(rate(traces_spanmetrics_latency_bucket[5m])) by (le, service_name)
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "p95 latency above 500ms for {{ $labels.service_name }}"
+            description: >
+              {{ $labels.service_name }} has a 95th-percentile request latency
+              of {{ $value | humanizeDuration }} over the last 5 minutes,
+              above the 500ms threshold.
+            runbook_url: "docs/runbooks/high-latency.md"
+
+    - name: online-boutique.errors
+      rules:
+        - alert: HighErrorRate
+          expr: >
+            sum(rate(traces_spanmetrics_calls_total{status_code=~"STATUS_CODE_ERROR|2"}[5m])) by (service_name)
+            /
+            sum(rate(traces_spanmetrics_calls_total[5m])) by (service_name)
+            > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Error rate above 5% for {{ $labels.service_name }}"
+            description: >
+              {{ $labels.service_name }} is returning errors on more than 5%
+              of requests over the last 5 minutes ({{ $value | humanizePercentage }}).
+            runbook_url: "docs/runbooks/high-error-rate.md"
+
+    - name: online-boutique.pods
+      rules:
+        - alert: PodCrashLooping
+          expr: >
+            increase(kube_pod_container_status_restarts_total{namespace="online-boutique"}[15m]) > 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.pod }} is crash looping"
+            description: >
+              Container {{ $labels.container }} in pod {{ $labels.pod }}
+              (namespace {{ $labels.namespace }}) has restarted more than 3
+              times in the last 15 minutes.
+            runbook_url: "docs/runbooks/pod-crash-looping.md"
+
+        - alert: PodNotReady
+          expr: >
+            sum by (namespace, pod) (kube_pod_status_ready{namespace="online-boutique", condition="false"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} not Ready for 10m+"
+            description: >
+              Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has
+              not reached Ready in over 10 minutes.
+            runbook_url: "docs/runbooks/pod-crash-looping.md"

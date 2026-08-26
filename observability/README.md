@@ -46,3 +46,86 @@ Note: the requests/sec panel proxies off `otelcol_receiver_accepted_spans`
 (the app doesn't expose a native Prometheus `/metrics` requests-total
 counter) -- close enough to see the load shape during a demo, not a
 production-grade RED metric.
+
+---
+
+## v3: SRE / observability + incident response (minikube target)
+
+Adds centralized logging, distributed tracing, real RED metrics, alerting,
+and incident-response docs/scripts on top of the v2 metrics stack above --
+all local, no cloud dependency. Tag: `v3.0-sre-observability`.
+
+| Piece | What it does |
+|---|---|
+| `loki/` | Loki + Promtail (`grafana/loki-stack` chart) -- centralized logs for all 11 services, filesystem storage |
+| `tempo/` | Grafana Tempo (single-binary) -- distributed tracing, filesystem storage |
+| `otel-collector/config.yaml` | Extended: traces now export to Tempo; a `spanmetrics` connector derives RED metrics (latency/error-rate) from spans, since the app has no native ones |
+| `prometheus/alert-rules.yaml` | `PrometheusRule`: p95 latency > 500ms, error rate > 5%, pod crash-looping, pod not-ready |
+| `alertmanager/` | Alertmanager route + Slack receiver, webhook supplied via Secret (never committed) |
+| `../docs/runbooks/` | One runbook per alert above |
+| `../scripts/debug/` | kubectl helper scripts for the 4 incident types the alerts cover |
+
+### Install order (minikube)
+
+```sh
+# Prereqs: minikube start --cpus=4 --memory=8192 (observability stack is
+# heavier than v1/v2 alone -- Loki, Tempo, Prometheus, Grafana, Alertmanager,
+# Promtail all running at once)
+
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# 1. Prometheus + Alertmanager + kube-state-metrics + node-exporter,
+#    with the Slack-wired Alertmanager overlay
+kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f observability/alertmanager/slack-webhook-secret.example.yaml   # edit the URL first, or create the Secret directly (see file header)
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  -f observability/prometheus/values.yaml \
+  -f observability/alertmanager/values.yaml
+kubectl apply -f observability/prometheus/alert-rules.yaml
+
+# 2. Loki + Promtail
+helm install loki grafana/loki-stack \
+  --namespace monitoring \
+  -f observability/loki/values.yaml
+
+# 3. Tempo
+helm install tempo grafana/tempo \
+  --namespace monitoring \
+  -f observability/tempo/values.yaml
+
+# 4. Re-apply the extended otel-collector config (traces -> Tempo, spanmetrics -> Prometheus)
+kubectl create configmap otel-collector-config -n online-boutique \
+  --from-file=config.yaml=observability/otel-collector/config.yaml \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n online-boutique rollout restart deployment/opentelemetrycollector
+
+# 5. Grafana -- add Loki and Tempo as datasources alongside the existing
+#    Prometheus one (see the v2 install order above for how Grafana itself
+#    was installed), then import observability/grafana/dashboard-autoscaling.json
+#    plus build/import panels for logs (Loki) and traces (Tempo) as needed.
+```
+
+### Verifying it end to end
+
+```bash
+# Metrics: RED metrics now exist as real series, not a proxy
+kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090
+# query: traces_spanmetrics_calls_total
+
+# Logs: every service's logs queryable in one place
+# Grafana -> Explore -> Loki -> {namespace="online-boutique", app="cartservice"}
+
+# Traces: full request waterfall across services
+# Grafana -> Explore -> Tempo -> search by service.name
+
+# Alerts: force one to fire and confirm it reaches Slack
+kubectl -n online-boutique delete pod -l app=cartservice --grace-period=0 --force
+# wait for PodCrashLooping/PodNotReady to appear in:
+kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093:9093
+```
+
+See `docs/runbooks/` for what to do once an alert actually fires, and
+`scripts/debug/` for the kubectl commands each runbook points at.

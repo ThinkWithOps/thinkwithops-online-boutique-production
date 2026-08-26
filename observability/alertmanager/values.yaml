@@ -1,0 +1,79 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Alertmanager config overlay -- applied ON TOP of the kube-prometheus-stack
+# release (Alertmanager ships bundled with that chart, this file is passed
+# as an additional -f alongside observability/prometheus/values.yaml).
+#
+# Slack webhook URL is NOT committed here -- see
+# observability/alertmanager/slack-webhook-secret.example.yaml for how to
+# supply it as a Kubernetes Secret instead.
+#
+# Install/upgrade:
+#   helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring \
+#     -f observability/prometheus/values.yaml \
+#     -f observability/alertmanager/values.yaml
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+    # Pulled in as an env-style secret file mount so the webhook URL never
+    # lands in this values file or in git history. See
+    # slack-webhook-secret.example.yaml for the Secret this references.
+    secrets:
+      - alertmanager-slack-webhook
+
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "slack-default"
+      group_by: ["alertname", "namespace"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 3h
+      routes:
+        - receiver: "slack-critical"
+          matchers:
+            - severity = "critical"
+          repeat_interval: 30m
+    receivers:
+      - name: "slack-default"
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/alertmanager-slack-webhook/webhook-url
+            channel: "#online-boutique-alerts"
+            send_resolved: true
+            title: '{{ .CommonAnnotations.summary }}'
+            text: >-
+              {{ range .Alerts }}{{ .Annotations.description }}
+              Runbook: {{ .Annotations.runbook_url }}
+              {{ end }}
+      - name: "slack-critical"
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/alertmanager-slack-webhook/webhook-url
+            channel: "#online-boutique-alerts-critical"
+            send_resolved: true
+            title: '🚨 {{ .CommonAnnotations.summary }}'
+            text: >-
+              {{ range .Alerts }}{{ .Annotations.description }}
+              Runbook: {{ .Annotations.runbook_url }}
+              {{ end }}

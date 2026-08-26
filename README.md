@@ -14,6 +14,10 @@
 ![Prometheus](https://img.shields.io/badge/Prometheus-Monitoring-E6522C?style=flat&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-Dashboards-F46800?style=flat&logo=grafana&logoColor=white)
 ![k6](https://img.shields.io/badge/k6-Load_Testing-7D64FF?style=flat&logo=k6&logoColor=white)
+![Loki](https://img.shields.io/badge/Loki-Logging-F46800?style=flat&logo=grafana&logoColor=white)
+![Tempo](https://img.shields.io/badge/Tempo-Tracing-F46800?style=flat&logo=grafana&logoColor=white)
+![Alertmanager](https://img.shields.io/badge/Alertmanager-Slack_Alerts-E6522C?style=flat&logo=prometheus&logoColor=white)
+![Minikube](https://img.shields.io/badge/Minikube-Local_Cluster-326CE5?style=flat&logo=kubernetes&logoColor=white)
 ![License](https://img.shields.io/badge/App_License-Apache_2.0-green?style=flat)
 
 ---
@@ -32,6 +36,7 @@
 - [Project Structure (AWS layer)](#project-structure-aws-layer)
 - [V2 — Load Testing + Autoscaling](#v2--load-testing--autoscaling)
 - [V2 Architecture](#v2-architecture)
+- [V3 — SRE / Observability + Incident Response](#v3--sre--observability--incident-response)
 - [Cost Notes](#cost-notes)
 - [What This Teaches](#what-this-teaches)
 - [Challenges](#challenges)
@@ -56,6 +61,7 @@ Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR
 |---|---|---|---|
 | V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | [Watch](https://youtu.be/qjnJab8mqcI) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
 | V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | [Watch](https://youtu.be/mjGCdLFqZ7k) | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
+| V3 | [`v3.0-sre-observability`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v3.0-sre-observability) | Coming soon | Loki/Promtail logging, Tempo tracing, Prometheus alert rules, Alertmanager + Slack, runbooks, incident debug scripts — local minikube |
 
 ---
 
@@ -156,6 +162,11 @@ flowchart TB
 | Prometheus + kube-state-metrics + node-exporter (V2) | Metrics scraping for pods, cluster state, and nodes |
 | OpenTelemetry Collector (V2) | Telemetry pipeline feeding Prometheus |
 | Grafana (V2) | `online-boutique-autoscaling` dashboard — live proof of scale-out/in |
+| Loki + Promtail (V3) | Centralized logging for all 11 services, filesystem storage, no object-store dependency |
+| Grafana Tempo (V3) | Distributed tracing, single-binary/local storage |
+| OTel Collector `spanmetrics` connector (V3) | Derives real RED (rate/error/duration) metrics from trace spans — the app has no native ones |
+| Prometheus Alertmanager + Slack (V3) | Alert routing — latency, error-rate, and pod-crash rules, Slack webhook receiver |
+| Minikube (V3 target) | Local single-node cluster — no AWS/cloud dependency for this layer |
 
 ---
 
@@ -287,11 +298,25 @@ k6/                                # V2 — in-cluster load test
 ├── k6-pod.yaml
 └── README.md
 
-observability/                    # V2 — Prometheus/Grafana/OTel stack
-├── prometheus/
+observability/
+├── prometheus/                   # V2 base + V3 alert-rules.yaml (PrometheusRule)
 ├── grafana/                      # online-boutique-autoscaling dashboard
-├── otel-collector/
+├── otel-collector/               # V2 base + V3 spanmetrics connector, Tempo exporter
+├── loki/                         # V3 — Loki + Promtail (centralized logging)
+├── tempo/                        # V3 — distributed tracing
+├── alertmanager/                 # V3 — Slack alert routing (webhook via Secret, not committed)
 └── README.md
+
+docs/runbooks/                    # V3 — one runbook per alert
+├── high-latency.md
+├── high-error-rate.md
+└── pod-crash-looping.md
+
+scripts/debug/                    # V3 — kubectl helpers for common incidents
+├── pod-crash.sh
+├── high-memory.sh
+├── slow-response.sh
+└── service-unreachable.sh
 ```
 
 ---
@@ -404,6 +429,34 @@ See `observability/README.md` for the full Prometheus/Grafana/OTel install order
 
 ---
 
+## V3 — SRE / Observability + Incident Response
+
+Builds on V2 without touching V1/V2 or any application code — target shifts to **local minikube**, no cloud dependencies. Tag: `v3.0-sre-observability`.
+
+- **Loki + Promtail** (`observability/loki/`) — centralized logs for all 11 services, queryable in Grafana by namespace/app/pod, filesystem storage (no object store needed).
+- **Grafana Tempo** (`observability/tempo/`) — distributed tracing, single-binary mode, local storage.
+- **OTel Collector `spanmetrics` connector** (`observability/otel-collector/config.yaml`) — the app never exposed a native `http_requests_total`/duration metric, so this derives real RED (rate/error/duration) metrics directly from trace spans instead of relying on a proxy metric.
+- **Prometheus alert rules** (`observability/prometheus/alert-rules.yaml`) — `HighRequestLatency` (p95 > 500ms), `HighErrorRate` (> 5%), `PodCrashLooping`, `PodNotReady`.
+- **Alertmanager + Slack** (`observability/alertmanager/`) — routes alerts to Slack via a webhook Secret (never committed — see `slack-webhook-secret.example.yaml`), critical alerts get their own channel + faster repeat interval.
+- **Runbooks** (`docs/runbooks/`) — one per alert, each linked from the alert's `runbook_url` annotation.
+- **Incident debug scripts** (`scripts/debug/`) — `pod-crash.sh`, `high-memory.sh`, `slow-response.sh`, `service-unreachable.sh`, each referenced from its matching runbook.
+
+### Why minikube for this layer
+
+V1/V2 are AWS-specific by design (Terraform/EKS/Karpenter only make sense against real cloud infra). The observability/incident-response layer is exactly the part that doesn't need to be — running it on minikube keeps the demo free of AWS cost and lets anyone reproduce it without an AWS account at all.
+
+```sh
+minikube start --cpus=4 --memory=8192
+```
+
+Full install order, verification steps, and what each piece is for: **see `observability/README.md`**.
+
+### The gap this closes
+
+V2 proved autoscaling works under load, live in a terminal. It didn't answer: what happens when something breaks at 3am? V3 adds the other half — logs to search, traces to follow a slow request across services, metrics-driven alerts that page before a user complains, and a runbook + debug script so the response isn't "start from zero."
+
+---
+
 ## Cost Notes
 
 - **EKS control plane**: flat $0.10/hr, no free tier
@@ -431,6 +484,11 @@ See `observability/README.md` for the full Prometheus/Grafana/OTel install order
 | k6 in-cluster load test | Load testing without local network bottleneck |
 | Prometheus + Grafana | Live proof of autoscaling — not just YAML |
 | metrics-server dependency | Understanding hidden add-on requirements |
+| OTel spanmetrics connector | Deriving real RED metrics from traces when the app exposes none natively |
+| Loki + Promtail | Centralized logging without a per-service logging agent |
+| Grafana Tempo | Distributed tracing, correlating a slow request across services |
+| PrometheusRule + Alertmanager routing | Alert-on-symptom design (latency/errors/crashes), severity-based routing |
+| Runbooks + debug scripts | Incident response that doesn't start from zero — docs and tooling as a deliverable, not an afterthought |
 
 ---
 
@@ -566,6 +624,20 @@ Every command used across this project's setup, deploy, verification, and teardo
 | `helm install grafana grafana/grafana --namespace monitoring` | Install standalone Grafana |
 | `kubectl -n monitoring port-forward svc/grafana 3000:80` | Access Grafana locally at `http://localhost:3000` |
 | `kubectl -n monitoring get pods` | Confirm the full observability stack is `Running` |
+
+**Loki / Tempo / Alertmanager (V3)**
+| Command | Purpose |
+|---|---|
+| `helm install loki grafana/loki-stack --namespace monitoring -f observability/loki/values.yaml` | Install Loki + Promtail (centralized logging) |
+| `helm install tempo grafana/tempo --namespace monitoring -f observability/tempo/values.yaml` | Install Tempo (distributed tracing) |
+| `kubectl apply -f observability/prometheus/alert-rules.yaml` | Apply the latency/error-rate/pod-crash `PrometheusRule` |
+| `kubectl apply -f observability/alertmanager/slack-webhook-secret.example.yaml` | Create the Slack webhook Secret (edit the URL first) |
+| `helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack --namespace monitoring -f observability/prometheus/values.yaml -f observability/alertmanager/values.yaml` | Apply the Slack-wired Alertmanager overlay |
+| `kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093:9093` | Access the Alertmanager UI locally |
+| `./scripts/debug/pod-crash.sh <app-label>` | Diagnose a crash-looping/OOMKilled pod |
+| `./scripts/debug/high-memory.sh <app-label>` | Check memory usage vs. limits for a service |
+| `./scripts/debug/slow-response.sh <app-label>` | Investigate a service tripping the latency alert |
+| `./scripts/debug/service-unreachable.sh <service-name>` | Diagnose a Service with no reachable endpoints |
 
 ---
 
