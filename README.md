@@ -55,7 +55,7 @@ Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR
 | Part | Tag | Video | Focus |
 |---|---|---|---|
 | V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | [Watch](https://youtu.be/qjnJab8mqcI) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
-| V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | Coming soon | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
+| V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | [Watch](https://youtu.be/mjGCdLFqZ7k) | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
 
 ---
 
@@ -150,6 +150,12 @@ flowchart TB
 | Helm 3 | Chart-based deploy, `values-aws-production.yaml` overlay on the existing chart |
 | Docker (multi-stage) | Per-service builds, existing Dockerfiles reused as-is |
 | aws-load-balancer-controller / ExternalDNS / Cluster Autoscaler | Optional add-ons for ALB ingress, Route53 automation, node autoscaling |
+| HorizontalPodAutoscaler + metrics-server (V2) | Pod-level autoscaling on CPU/memory for 10 services |
+| Karpenter (V2) | Node-level autoscaling — on-demand `t3.small` provisioning + consolidation |
+| k6 (V2) | In-cluster load test, ramping virtual users |
+| Prometheus + kube-state-metrics + node-exporter (V2) | Metrics scraping for pods, cluster state, and nodes |
+| OpenTelemetry Collector (V2) | Telemetry pipeline feeding Prometheus |
+| Grafana (V2) | `online-boutique-autoscaling` dashboard — live proof of scale-out/in |
 
 ---
 
@@ -271,6 +277,21 @@ addons/
 
 .github/workflows/
 └── aws-eks-deploy.yaml           # matrix build/push to ECR (OIDC) + helm upgrade --install
+
+karpenter/                        # V2 — node-level autoscaler
+├── nodepool.yaml                 # NodePool + EC2NodeClass, t3.small on-demand
+└── README.md
+
+k6/                                # V2 — in-cluster load test
+├── 100k-users.js                 # ramp script, browse → cart → checkout
+├── k6-pod.yaml
+└── README.md
+
+observability/                    # V2 — Prometheus/Grafana/OTel stack
+├── prometheus/
+├── grafana/                      # online-boutique-autoscaling dashboard
+├── otel-collector/
+└── README.md
 ```
 
 ---
@@ -390,6 +411,7 @@ See `observability/README.md` for the full Prometheus/Grafana/OTel install order
 - **NAT gateway**: single NAT (not 3) to cut cost for demo/non-HA use
 - Rough total: **~$0.20–0.25/hr** running, effectively **$0** once `terraform destroy` is run
 - Recommended workflow: `apply` → verify/demo → `destroy`, rather than leaving the cluster up
+- **V2 load test cost spike**: Karpenter scaling 2 → 8 nodes during a k6 run roughly 4x's the node-hour cost for the duration of the test (~8× `t3.small` instead of 2×); consolidation (`consolidateAfter: 1m`) reclaims nodes within minutes of load dropping, so the spike is short-lived, not sustained
 
 ---
 
@@ -417,6 +439,9 @@ See `observability/README.md` for the full Prometheus/Grafana/OTel install order
 - **Corporate/local AV HTTPS scanning broke Terraform.** AVG's Web Shield intercepted loopback TLS between Terraform core and its provider plugin (`x509: certificate signed by unknown authority` on a *local* gRPC handshake). Fixed by temporarily disabling HTTPS scanning during `plan`/`apply`.
 - **AWS CLI/Terraform SSL errors from corp network TLS interception.** `SSL_CERT_FILE`/`AWS_CA_BUNDLE` pointed at a PEM built from the Windows trusted-root cert store resolved it.
 - **Node group `CREATE_FAILED`: `t3.medium` rejected.** `AsgInstanceLaunchFailures: ... not eligible for Free Tier`. The AWS account was restricted to free-tier instance types only. Switched to `t3.small` (free-tier eligible, 2 vCPU/2GB — still enough for all 11 lightweight services) and re-applied only the node group.
+- **HPA showed `<unknown>` targets, never scaled (V2).** No error, no event — just silently stuck at 0% CPU/memory forever. Root cause: `metrics-server` wasn't installed. HPA depends on it entirely and fails quiet, not loud, when it's missing.
+- **Karpenter controller pod couldn't get AWS credentials (V2).** Needed the `eks-pod-identity-agent` EKS add-on installed and a pod-identity association wired to the controller's IAM role (`terraform-aws/eks.tf` / `terraform-aws/iam.tf`, `module.karpenter`) before the controller could launch nodes at all — IRSA alone wasn't enough for this path.
+- **k6 from a laptop skewed results (V2).** Running the load test from a local machine made the local network/machine the bottleneck, not the cluster. Moved k6 in-cluster (`k6/k6-pod.yaml`) so traffic originates from the same VPC as real user traffic.
 
 ---
 
