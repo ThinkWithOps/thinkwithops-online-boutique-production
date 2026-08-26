@@ -41,6 +41,7 @@
 - [What This Teaches](#what-this-teaches)
 - [Challenges](#challenges)
 - [Cleanup](#cleanup)
+- [Command Reference](#command-reference)
 - [GCP Path (original, untouched)](#gcp-path-original-untouched)
 
 ---
@@ -500,6 +501,8 @@ V2 proved autoscaling works under load, live in a terminal. It didn't answer: wh
 - **HPA showed `<unknown>` targets, never scaled (V2).** No error, no event — just silently stuck at 0% CPU/memory forever. Root cause: `metrics-server` wasn't installed. HPA depends on it entirely and fails quiet, not loud, when it's missing.
 - **Karpenter controller pod couldn't get AWS credentials (V2).** Needed the `eks-pod-identity-agent` EKS add-on installed and a pod-identity association wired to the controller's IAM role (`terraform-aws/eks.tf` / `terraform-aws/iam.tf`, `module.karpenter`) before the controller could launch nodes at all — IRSA alone wasn't enough for this path.
 - **k6 from a laptop skewed results (V2).** Running the load test from a local machine made the local network/machine the bottleneck, not the cluster. Moved k6 in-cluster (`k6/k6-pod.yaml`) so traffic originates from the same VPC as real user traffic.
+- **`minikube start --memory=8192` rejected (V3).** `MK_USAGE: Docker Desktop has only 7844MB memory but you specified 8192MB`. Docker Desktop's own memory allocation (Settings → Resources → Memory) was below what minikube was asked for. Fixed by either lowering the `--memory` flag to fit (e.g. `--memory=7500`) or raising Docker Desktop's limit first.
+- **`recommendationservice` / `emailservice` crash-looping on minikube, not on EKS (V3).** `Readiness probe failed: timeout ... context deadline exceeded` — the app itself was fine, but a 1-second probe `timeoutSeconds` (tuned for real cloud nodes) was too tight once 11 services + the full observability stack were sharing a 4-vCPU minikube node. Fixed by patching `livenessProbe`/`readinessProbe` `timeoutSeconds` up to 5s on the affected deployments — see `docs/runbooks/pod-crash-looping.md`.
 
 ---
 
@@ -582,6 +585,17 @@ Every command used across this project's setup, deploy, verification, and teardo
 | `helm list -n online-boutique` | Confirm the release is deployed |
 | `helm status online-boutique -n online-boutique` | Full release status |
 | `helm uninstall online-boutique -n online-boutique` | Remove the release (do this **before** `terraform destroy`, see Cleanup above) |
+
+**Minikube (V3 local target)**
+| Command | Purpose |
+|---|---|
+| `minikube start --cpus=4 --memory=7500` | Start the local cluster (lower `--memory` if Docker Desktop rejects 8192 — see Challenges) |
+| `kubectl create namespace online-boutique --dry-run=client -o yaml \| kubectl apply -f -` | Create the app namespace |
+| `helm install online-boutique helm-chart/ --namespace online-boutique` | Deploy the app using its default public-image values — no AWS overlay needed |
+| `minikube service frontend-external -n online-boutique` | Open the storefront in a browser (minikube has no cloud LoadBalancer) |
+| `kubectl -n online-boutique port-forward svc/frontend-external 8080:80` | Alternative to `minikube service` — access at `localhost:8080` |
+| `kubectl -n online-boutique patch deployment <name> --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/timeoutSeconds","value":5},{"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/timeoutSeconds","value":5}]'` | Fix probe-timeout crash-looping under CPU contention (see Challenges) |
+| `minikube delete` | Tear down the local cluster entirely |
 
 **GitHub Actions / OIDC diagnostics**
 | Command | Purpose |
