@@ -96,6 +96,8 @@ shows 11/11 `Running`, move on to the observability stack below.
 
 ### Install order (minikube)
 
+Or run it in one shot: `./scripts/install-observability-stack.sh` (same steps below, scripted — idempotent, safe to re-run).
+
 ```sh
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts

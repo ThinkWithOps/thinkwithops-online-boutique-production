@@ -313,11 +313,13 @@ docs/runbooks/                    # V3 — one runbook per alert
 ├── high-error-rate.md
 └── pod-crash-looping.md
 
-scripts/debug/                    # V3 — kubectl helpers for common incidents
-├── pod-crash.sh
-├── high-memory.sh
-├── slow-response.sh
-└── service-unreachable.sh
+scripts/
+├── install-observability-stack.sh  # V3 — one-shot install of the whole stack below
+└── debug/                          # V3 — kubectl helpers for common incidents
+    ├── pod-crash.sh
+    ├── high-memory.sh
+    ├── slow-response.sh
+    └── service-unreachable.sh
 ```
 
 ---
@@ -642,6 +644,7 @@ Every command used across this project's setup, deploy, verification, and teardo
 **Loki / Tempo / Alertmanager (V3)**
 | Command | Purpose |
 |---|---|
+| `./scripts/install-observability-stack.sh` | Install the entire V3 stack in one shot — Prometheus, Alertmanager, alert rules, Loki, Tempo, otel-collector config (idempotent) |
 | `helm install loki grafana/loki-stack --namespace monitoring -f observability/loki/values.yaml` | Install Loki + Promtail (centralized logging) |
 | `helm install tempo grafana/tempo --namespace monitoring -f observability/tempo/values.yaml` | Install Tempo (distributed tracing) |
 | `kubectl apply -f observability/prometheus/alert-rules.yaml` | Apply the latency/error-rate/pod-crash `PrometheusRule` |
