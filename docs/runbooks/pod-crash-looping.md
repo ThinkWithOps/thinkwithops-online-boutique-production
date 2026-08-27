@@ -23,7 +23,18 @@ Common causes in this app:
 
 - **OOMKilled**: container hit its memory limit. `kubectl -n online-boutique describe pod <pod-name> | grep -A3 "Last State"`. Fix: raise `resources.limits.memory` for that service in `helm-chart/values.yaml` / `values-aws-production.yaml`, or find the actual leak.
 - **CrashLoopBackOff from a bad config/env var**: check `kubectl -n online-boutique logs --previous <pod-name>` for a startup error — missing env var, bad gRPC target address, etc.
-- **Liveness probe failing**: the process is up but not responding on the expected port/path in time. `kubectl -n online-boutique describe pod <pod-name> | grep -A5 Liveness`.
+- **Liveness/readiness probe failing on minikube (timing, not a real bug)**: `Liveness probe failed: timeout ... context deadline exceeded`, empty `--previous` logs, and `kubectl describe` showing repeated `Killing`/`Started` cycles all point to a probe that's too aggressive for a resource-constrained node, not an actual application error. Two separate things to check, both matter:
+  - `timeoutSeconds` too tight for a contended node — bump it (e.g. `1s` → `5s`).
+  - **No `initialDelaySeconds` set at all** — the first probe fires the instant the pod is scheduled, before a cold-starting service (Python gRPC services in particular — import + startup time) has had a chance to actually bind its port. Bumping `timeoutSeconds` alone does NOT fix this; the probe still fires too early and kills the container before it's ever had a real chance to come up. Fix both together:
+    ```bash
+    kubectl -n online-boutique patch deployment <service-name> --type=json -p='[
+      {"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/timeoutSeconds","value":5},
+      {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/timeoutSeconds","value":5},
+      {"op":"add","path":"/spec/template/spec/containers/0/livenessProbe/initialDelaySeconds","value":20},
+      {"op":"add","path":"/spec/template/spec/containers/0/readinessProbe/initialDelaySeconds","value":20}
+    ]'
+    ```
+  - `kubectl -n online-boutique describe pod <pod-name> | grep -A5 Liveness` shows the current values before/after.
 - **ImagePullBackOff** (shows as NotReady, not crash-looping): wrong image tag/ECR auth. `kubectl -n online-boutique describe pod <pod-name> | grep -A3 Events`.
 - **cartservice specifically**: crash-looping here is very often a Redis connectivity issue at startup, not a code bug — check `redis-cart` is `Running` first.
 
