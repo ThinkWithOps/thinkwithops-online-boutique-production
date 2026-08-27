@@ -18,9 +18,26 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "=================================================================="
+echo "0/5 -- checking cluster connectivity"
+echo "=================================================================="
+if ! kubectl cluster-info >/dev/null 2>&1; then
+  echo "kubectl can't reach the cluster. Try:"
+  echo "  minikube status"
+  echo "  minikube update-context"
+  exit 1
+fi
+echo "OK -- kubectl reaches $(kubectl config current-context) cluster."
+
+echo
+echo "=================================================================="
 echo "1/5 -- namespace + Slack webhook secret"
 echo "=================================================================="
-kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+# --validate=false: kubectl's client-side schema validation downloads the
+# full OpenAPI spec from the apiserver on every apply -- on minikube this
+# occasionally fails transiently even when the cluster itself is reachable
+# (see docs/runbooks/pod-crash-looping.md-adjacent flakiness notes). The
+# manifests here are static and known-good, so skipping validation is safe.
+kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
 if kubectl -n monitoring get secret alertmanager-slack-webhook >/dev/null 2>&1; then
   echo "Slack webhook secret already exists -- leaving it as-is."
@@ -29,7 +46,7 @@ else
   echo "  Applying the example placeholder -- Alertmanager will still fire"
   echo "  internally, but Slack delivery will fail until you replace the URL:"
   echo "    kubectl -n monitoring edit secret alertmanager-slack-webhook"
-  kubectl apply -f observability/alertmanager/slack-webhook-secret.example.yaml
+  kubectl apply --validate=false -f observability/alertmanager/slack-webhook-secret.example.yaml
 fi
 
 echo
@@ -50,7 +67,7 @@ helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheu
   -f observability/alertmanager/values.yaml \
   --wait --timeout 5m
 
-kubectl apply -f observability/prometheus/alert-rules.yaml
+kubectl apply --validate=false -f observability/prometheus/alert-rules.yaml
 
 echo
 echo "=================================================================="
@@ -72,7 +89,7 @@ echo "5/5 -- otel-collector config (traces -> Tempo, spanmetrics -> Prometheus)"
 echo "=================================================================="
 kubectl create configmap otel-collector-config -n online-boutique \
   --from-file=config.yaml=observability/otel-collector/config.yaml \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | kubectl apply --validate=false -f -
 kubectl -n online-boutique rollout restart deployment/opentelemetrycollector
 kubectl -n online-boutique rollout status deployment/opentelemetrycollector --timeout=2m
 
