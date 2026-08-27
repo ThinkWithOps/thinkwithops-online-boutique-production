@@ -123,17 +123,33 @@ helm install tempo grafana/tempo \
   --namespace monitoring \
   -f observability/tempo/values.yaml
 
-# 4. Re-apply the extended otel-collector config (traces -> Tempo, spanmetrics -> Prometheus)
+# 4. Apply the extended collector config and its local Deployment/Service
+#    (traces -> Tempo, spanmetrics -> Prometheus)
 kubectl create configmap otel-collector-config -n online-boutique \
   --from-file=config.yaml=observability/otel-collector/config.yaml \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | kubectl apply --validate=false -f -
+kubectl apply --validate=false -f observability/otel-collector/deployment.yaml
 kubectl -n online-boutique rollout restart deployment/opentelemetrycollector
+kubectl -n online-boutique rollout status deployment/opentelemetrycollector --timeout=2m
 
 # 5. Grafana -- add Loki and Tempo as datasources alongside the existing
 #    Prometheus one (see the v2 install order above for how Grafana itself
 #    was installed), then import observability/grafana/dashboard-autoscaling.json
 #    plus build/import panels for logs (Loki) and traces (Tempo) as needed.
 ```
+
+### Troubleshooting the installer on Windows/minikube
+
+If the preflight fails with `x509: certificate signed by unknown authority`, first run:
+
+```powershell
+kubectl get pods -n online-boutique
+kubectl auth can-i get pods -n online-boutique
+```
+
+When both fail against a loopback API endpoint such as `https://127.0.0.1:<port>`, temporarily disable AVG Web Shield/HTTPS scanning and retry immediately. If access returns, the cluster is healthy and AVG is replacing minikube's TLS certificate; add an exception for `kubectl`/loopback HTTPS. Do not use `minikube delete` for this symptom.
+
+On the first install, Helm may exceed its five-minute wait while pulling Prometheus, Loki, Promtail, or Tempo images. Check `kubectl -n monitoring get pods` and recent events. If containers are progressing from `ContainerCreating` to `Running`, rerun the installer after the pulls finish; every step uses upgrade/apply semantics.
 
 ### Verifying it end to end
 

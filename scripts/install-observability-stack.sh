@@ -90,6 +90,7 @@ echo "=================================================================="
 kubectl create configmap otel-collector-config -n online-boutique \
   --from-file=config.yaml=observability/otel-collector/config.yaml \
   --dry-run=client -o yaml | kubectl apply --validate=false -f -
+kubectl apply --validate=false -f observability/otel-collector/deployment.yaml
 kubectl -n online-boutique rollout restart deployment/opentelemetrycollector
 kubectl -n online-boutique rollout status deployment/opentelemetrycollector --timeout=2m
 
