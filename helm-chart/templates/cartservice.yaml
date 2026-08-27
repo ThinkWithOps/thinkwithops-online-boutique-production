@@ -86,10 +86,13 @@ spec:
         resources:
           {{- toYaml .Values.cartService.resources | nindent 10 }}
         readinessProbe:
+          timeoutSeconds: 5
           initialDelaySeconds: 15
           grpc:
             port: 7070
         livenessProbe:
+          failureThreshold: 6
+          timeoutSeconds: 5
           initialDelaySeconds: 15
           periodSeconds: 10
           grpc:
@@ -259,10 +262,13 @@ spec:
         ports:
         - containerPort: 6379
         readinessProbe:
+          timeoutSeconds: 5
           periodSeconds: 5
           tcpSocket:
             port: 6379
         livenessProbe:
+          failureThreshold: 6
+          timeoutSeconds: 5
           periodSeconds: 5
           tcpSocket:
             port: 6379

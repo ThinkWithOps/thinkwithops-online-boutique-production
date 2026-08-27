@@ -73,10 +73,21 @@ spec:
         ports:
         - containerPort: 8080
         readinessProbe:
+          initialDelaySeconds: 20
+          timeoutSeconds: 5
           periodSeconds: 5
           grpc:
             port: 8080
+        startupProbe:
+          timeoutSeconds: 5
+          periodSeconds: 5
+          failureThreshold: 60
+          grpc:
+            port: 8080
         livenessProbe:
+          failureThreshold: 6
+          initialDelaySeconds: 20
+          timeoutSeconds: 5
           periodSeconds: 5
           grpc:
             port: 8080

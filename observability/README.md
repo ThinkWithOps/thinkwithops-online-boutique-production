@@ -151,6 +151,29 @@ When both fail against a loopback API endpoint such as `https://127.0.0.1:<port>
 
 On the first install, Helm may exceed its five-minute wait while pulling Prometheus, Loki, Promtail, or Tempo images. Check `kubectl -n monitoring get pods` and recent events. If containers are progressing from `ContainerCreating` to `Running`, rerun the installer after the pulls finish; every step uses upgrade/apply semantics.
 
+#### Application pods restart after installing observability
+
+Check whether Kubernetes, rather than the application, is killing containers after probe timeouts:
+
+```powershell
+kubectl -n online-boutique get events --sort-by=.lastTimestamp
+docker stats minikube --no-stream
+docker inspect minikube --format "CPUs={{.HostConfig.NanoCpus}} Memory={{.HostConfig.Memory}}"
+```
+
+On a 2-CPU/4-GB profile, the application and observability stack can saturate the node, causing one-second gRPC/HTTP probes and even etcd requests to time out. Exit code `137` combined with `Container server failed liveness probe, will be restarted` indicates a probe-triggered kill; it is not by itself evidence of an application crash or OOM.
+
+The Helm chart mitigates this by using five-second readiness/liveness timeouts and requiring six consecutive liveness failures before restart. `emailservice` and `recommendationservice` also have startup probes that allow up to five minutes for Python cold starts. Deploy probe changes sequentially when the node is already pressured, and temporarily scale synthetic traffic down if needed:
+
+```powershell
+kubectl -n online-boutique scale deployment/loadgenerator --replicas=0
+helm upgrade online-boutique helm-chart/ -n online-boutique --reuse-values --wait --timeout 10m
+kubectl -n online-boutique scale deployment/loadgenerator --replicas=1
+kubectl -n online-boutique get pods
+```
+
+The Docker driver cannot resize CPU or memory for an existing Minikube profile. Do not delete a cluster containing work merely to clear restart counters; counters are historical and reset when replacement pods roll out. For a future disposable profile, allocate 4 CPUs and about 7.5 GB RAM before installing the full stack.
+
 ### Verifying it end to end
 
 ```bash
