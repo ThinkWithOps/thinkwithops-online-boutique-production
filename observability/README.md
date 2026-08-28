@@ -22,14 +22,13 @@ kubectl create configmap otel-collector-config -n online-boutique \
 kubectl -n online-boutique rollout restart deployment/opentelemetrycollector
 
 # 3. Grafana (bundled in kube-prometheus-stack is disabled here so the
-#    dashboard JSON stays in git; install standalone or re-enable it in
-#    prometheus/values.yaml and skip this step)
+#    dashboard JSON stays in git). observability/grafana/values.yaml wires
+#    up all three datasources at once (Prometheus, Loki, Tempo) -- this
+#    supersedes the Prometheus-only inline --set command from earlier V2
+#    docs, since Loki/Tempo didn't exist yet at that point.
 helm install grafana grafana/grafana \
   --namespace monitoring \
-  --set datasources."datasources\.yaml".apiVersion=1 \
-  --set-string datasources."datasources\.yaml".datasources[0].name=Prometheus \
-  --set-string datasources."datasources\.yaml".datasources[0].type=prometheus \
-  --set-string datasources."datasources\.yaml".datasources[0].url=http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  -f observability/grafana/values.yaml
 
 # Import the dashboard: Grafana UI -> Dashboards -> Import ->
 # upload observability/grafana/dashboard-autoscaling.json
@@ -132,10 +131,22 @@ kubectl apply --validate=false -f observability/otel-collector/deployment.yaml
 kubectl -n online-boutique rollout restart deployment/opentelemetrycollector
 kubectl -n online-boutique rollout status deployment/opentelemetrycollector --timeout=2m
 
-# 5. Grafana -- add Loki and Tempo as datasources alongside the existing
-#    Prometheus one (see the v2 install order above for how Grafana itself
-#    was installed), then import observability/grafana/dashboard-autoscaling.json
-#    plus build/import panels for logs (Loki) and traces (Tempo) as needed.
+# 5. Turn on tracing IN the app itself -- helm-chart/values.yaml's
+#    opentelemetryCollector.enabled=true wires COLLECTOR_SERVICE_ADDR,
+#    OTEL_SERVICE_NAME, and ENABLE_TRACING into every service. Without this
+#    step the collector/Tempo/spanmetrics pipeline above has nothing to
+#    receive -- the app never sends OTLP traces on its own.
+helm upgrade online-boutique helm-chart/ -n online-boutique --reuse-values \
+  --set opentelemetryCollector.enabled=true --wait --timeout 5m
+
+# 6. Grafana -- observability/grafana/values.yaml wires up all three
+#    datasources at once (Prometheus, Loki, Tempo):
+helm install grafana grafana/grafana \
+  --namespace monitoring \
+  -f observability/grafana/values.yaml
+# then import observability/grafana/dashboard-autoscaling.json (Grafana UI ->
+# Dashboards -> Import), plus build/import panels for logs (Loki) and
+# traces (Tempo) as needed.
 ```
 
 ### Troubleshooting the installer on Windows/minikube

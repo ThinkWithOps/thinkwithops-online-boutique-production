@@ -18,7 +18,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "=================================================================="
-echo "0/5 -- checking cluster connectivity"
+echo "0/7 -- checking cluster connectivity"
 echo "=================================================================="
 if ! kubectl cluster-info >/dev/null 2>&1; then
   echo "kubectl can't reach the cluster. Try:"
@@ -30,7 +30,7 @@ echo "OK -- kubectl reaches $(kubectl config current-context) cluster."
 
 echo
 echo "=================================================================="
-echo "1/5 -- namespace + Slack webhook secret"
+echo "1/7 -- namespace + Slack webhook secret"
 echo "=================================================================="
 # --validate=false: kubectl's client-side schema validation downloads the
 # full OpenAPI spec from the apiserver on every apply -- on minikube this
@@ -51,7 +51,7 @@ fi
 
 echo
 echo "=================================================================="
-echo "2/5 -- Helm repos"
+echo "2/7 -- Helm repos"
 echo "=================================================================="
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null
 helm repo add grafana https://grafana.github.io/helm-charts >/dev/null
@@ -59,7 +59,7 @@ helm repo update
 
 echo
 echo "=================================================================="
-echo "3/5 -- Prometheus + Alertmanager + alert rules"
+echo "3/7 -- Prometheus + Alertmanager + alert rules"
 echo "=================================================================="
 helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
@@ -71,7 +71,7 @@ kubectl apply --validate=false -f observability/prometheus/alert-rules.yaml
 
 echo
 echo "=================================================================="
-echo "4/5 -- Loki + Promtail, Tempo"
+echo "4/7 -- Loki + Promtail, Tempo"
 echo "=================================================================="
 helm upgrade --install loki grafana/loki-stack \
   --namespace monitoring \
@@ -85,7 +85,7 @@ helm upgrade --install tempo grafana/tempo \
 
 echo
 echo "=================================================================="
-echo "5/5 -- otel-collector config (traces -> Tempo, spanmetrics -> Prometheus)"
+echo "5/7 -- otel-collector config (traces -> Tempo, spanmetrics -> Prometheus)"
 echo "=================================================================="
 kubectl create configmap otel-collector-config -n online-boutique \
   --from-file=config.yaml=observability/otel-collector/config.yaml \
@@ -96,11 +96,32 @@ kubectl -n online-boutique rollout status deployment/opentelemetrycollector --ti
 
 echo
 echo "=================================================================="
+echo "6/7 -- turn on tracing in the app itself"
+echo "=================================================================="
+# Without this, the collector/Tempo/spanmetrics pipeline above has nothing
+# to receive -- opentelemetryCollector.enabled=true is what actually wires
+# COLLECTOR_SERVICE_ADDR/OTEL_SERVICE_NAME/ENABLE_TRACING into every service.
+helm upgrade online-boutique helm-chart/ -n online-boutique --reuse-values \
+  --set opentelemetryCollector.enabled=true --wait --timeout 5m
+
+echo
+echo "=================================================================="
+echo "7/7 -- Grafana (Prometheus + Loki + Tempo datasources)"
+echo "=================================================================="
+helm upgrade --install grafana grafana/grafana \
+  --namespace monitoring \
+  -f observability/grafana/values.yaml \
+  --wait --timeout 5m
+
+echo
+echo "=================================================================="
 echo "Done. Verify:"
 echo "=================================================================="
 echo "  kubectl -n monitoring get pods"
 echo "  kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090"
 echo "  kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093:9093"
+echo "  kubectl -n monitoring port-forward svc/grafana 3000:80"
+echo "  then import observability/grafana/dashboard-autoscaling.json"
 echo
 echo "If any monitoring pod crash-loops on minikube's limited resources,"
 echo "see docs/runbooks/pod-crash-looping.md (probe timeoutSeconds/"

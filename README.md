@@ -162,7 +162,7 @@ flowchart TB
 | k6 (V2) | In-cluster load test, ramping virtual users |
 | Prometheus + kube-state-metrics + node-exporter (V2) | Metrics scraping for pods, cluster state, and nodes |
 | OpenTelemetry Collector (V2) | Telemetry pipeline feeding Prometheus |
-| Grafana (V2) | `online-boutique-autoscaling` dashboard — live proof of scale-out/in |
+| Grafana (V2 dashboard, V3 datasources) | `online-boutique-autoscaling` dashboard (V2); wired to Prometheus + Loki + Tempo datasources for logs/traces/metrics in one place (V3) |
 | Loki + Promtail (V3) | Centralized logging for all 11 services, filesystem storage, no object-store dependency |
 | Grafana Tempo (V3) | Distributed tracing, single-binary/local storage |
 | OTel Collector `spanmetrics` connector (V3) | Derives real RED (rate/error/duration) metrics from trace spans — the app has no native ones |
@@ -301,8 +301,8 @@ k6/                                # V2 — in-cluster load test
 
 observability/
 ├── prometheus/                   # V2 base + V3 alert-rules.yaml (PrometheusRule)
-├── grafana/                      # online-boutique-autoscaling dashboard
-├── otel-collector/               # V2 base + V3 spanmetrics connector, Tempo exporter
+├── grafana/                      # dashboard-autoscaling.json (V2) + values.yaml — V3 Prometheus/Loki/Tempo datasources
+├── otel-collector/               # V2 base + V3 spanmetrics connector, Tempo exporter, deployment.yaml (Deployment/Service, not shipped by the base chart)
 ├── loki/                         # V3 — Loki + Promtail (centralized logging)
 ├── tempo/                        # V3 — distributed tracing
 ├── alertmanager/                 # V3 — Slack alert routing (webhook via Secret, not committed)
@@ -438,11 +438,20 @@ Builds on V2 without touching V1/V2 or any application code — target shifts to
 
 - **Loki + Promtail** (`observability/loki/`) — centralized logs for all 11 services, queryable in Grafana by namespace/app/pod, filesystem storage (no object store needed).
 - **Grafana Tempo** (`observability/tempo/`) — distributed tracing, single-binary mode, local storage.
-- **OTel Collector `spanmetrics` connector** (`observability/otel-collector/config.yaml`) — the app never exposed a native `http_requests_total`/duration metric, so this derives real RED (rate/error/duration) metrics directly from trace spans instead of relying on a proxy metric.
+- **OTel Collector `spanmetrics` connector** (`observability/otel-collector/config.yaml`, `deployment.yaml`) — the app never exposed a native `http_requests_total`/duration metric, so this derives real RED (rate/error/duration) metrics directly from trace spans instead of relying on a proxy metric. The collector's Deployment/Service is shipped here directly (`observability/otel-collector/deployment.yaml`) since the base Helm chart doesn't create one by default; tracing itself is turned on in the app via `helm-chart/values.yaml`'s `opentelemetryCollector.enabled` flag.
+- **Grafana** (`observability/grafana/values.yaml`) — pre-wired to all three datasources (Prometheus, Loki, Tempo) plus the `dashboard-autoscaling.json` dashboard from V2.
 - **Prometheus alert rules** (`observability/prometheus/alert-rules.yaml`) — `HighRequestLatency` (p95 > 500ms), `HighErrorRate` (> 5%), `PodCrashLooping`, `PodNotReady`.
-- **Alertmanager + Slack** (`observability/alertmanager/`) — routes alerts to Slack via a webhook Secret (never committed — see `slack-webhook-secret.example.yaml`), critical alerts get their own channel + faster repeat interval.
+- **Alertmanager + Slack** (`observability/alertmanager/`) — routes alerts to Slack via a webhook Secret (never committed — see `slack-webhook-secret.example.yaml`), critical alerts get their own channel + faster repeat interval. **Slack delivery itself is unverified** — the Secret ships with a placeholder URL; alert routing/firing was confirmed directly in the Alertmanager UI instead (see below), and wiring a real webhook is a deliberately deferred, separate step.
 - **Runbooks** (`docs/runbooks/`) — one per alert, each linked from the alert's `runbook_url` annotation.
 - **Incident debug scripts** (`scripts/debug/`) — `pod-crash.sh`, `high-memory.sh`, `slow-response.sh`, `service-unreachable.sh`, each referenced from its matching runbook.
+
+### Verified end-to-end on minikube
+
+- All 13 app pods + full monitoring stack (Prometheus, Alertmanager, Loki, Tempo, Grafana, otel-collector) `Running`, 0 restarts sustained after the probe-timing fixes below.
+- Grafana's Prometheus/Loki/Tempo datasources all show green ("Data source is working"); `dashboard-autoscaling.json` renders real data, not empty panels.
+- `kubectl get prometheusrule` confirms all 4 alert rules loaded; Prometheus's Rules page shows them evaluating (not `unknown`/error state).
+- A forced pod deletion (`kubectl delete pod -l app=cartservice --grace-period=0 --force`) triggered `PodCrashLooping`/`PodNotReady` and it was confirmed firing in the Alertmanager UI.
+- Real traces (multi-service spans, e.g. `frontend` → `checkoutservice` → `paymentservice`) and real log lines both confirmed queryable in Grafana Explore, driven by the existing `loadgenerator`.
 
 ### Why minikube for this layer
 
@@ -639,7 +648,7 @@ Every command used across this project's setup, deploy, verification, and teardo
 | Command | Purpose |
 |---|---|
 | `helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace -f observability/prometheus/values.yaml` | Install Prometheus + kube-state-metrics + node-exporter + Alertmanager |
-| `helm install grafana grafana/grafana --namespace monitoring` | Install standalone Grafana |
+| `helm install grafana grafana/grafana --namespace monitoring -f observability/grafana/values.yaml` | Install standalone Grafana, pre-wired to Prometheus + Loki + Tempo datasources (V3) |
 | `kubectl -n monitoring port-forward svc/grafana 3000:80` | Access Grafana locally at `http://localhost:3000` |
 | `kubectl -n monitoring get pods` | Confirm the full observability stack is `Running` |
 
@@ -652,6 +661,7 @@ Every command used across this project's setup, deploy, verification, and teardo
 | `kubectl apply -f observability/prometheus/alert-rules.yaml` | Apply the latency/error-rate/pod-crash `PrometheusRule` |
 | `kubectl apply -f observability/alertmanager/slack-webhook-secret.example.yaml` | Create the Slack webhook Secret (edit the URL first) |
 | `helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack --namespace monitoring -f observability/prometheus/values.yaml -f observability/alertmanager/values.yaml` | Apply the Slack-wired Alertmanager overlay |
+| `helm upgrade online-boutique helm-chart/ -n online-boutique --reuse-values --set opentelemetryCollector.enabled=true` | Turn on tracing in the app itself — required, otherwise nothing ever sends OTLP traces to the collector/Tempo pipeline |
 | `kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093:9093` | Access the Alertmanager UI locally |
 | `./scripts/debug/pod-crash.sh <app-label>` | Diagnose a crash-looping/OOMKilled pod |
 | `./scripts/debug/high-memory.sh <app-label>` | Check memory usage vs. limits for a service |
