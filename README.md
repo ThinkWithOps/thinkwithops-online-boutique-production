@@ -37,6 +37,7 @@
 - [V2 — Load Testing + Autoscaling](#v2--load-testing--autoscaling)
 - [V2 Architecture](#v2-architecture)
 - [V3 — SRE / Observability + Incident Response](#v3--sre--observability--incident-response)
+- [V3 Architecture](#v3-architecture)
 - [Cost Notes](#cost-notes)
 - [What This Teaches](#what-this-teaches)
 - [Challenges](#challenges)
@@ -444,6 +445,64 @@ Builds on V2 without touching V1/V2 or any application code — target shifts to
 - **Alertmanager + Slack** (`observability/alertmanager/`) — routes alerts to Slack via a webhook Secret (never committed — see `slack-webhook-secret.example.yaml`), critical alerts get their own channel + faster repeat interval. **Slack delivery itself is unverified** — the Secret ships with a placeholder URL; alert routing/firing was confirmed directly in the Alertmanager UI instead (see below), and wiring a real webhook is a deliberately deferred, separate step.
 - **Runbooks** (`docs/runbooks/`) — one per alert, each linked from the alert's `runbook_url` annotation.
 - **Incident debug scripts** (`scripts/debug/`) — `pod-crash.sh`, `high-memory.sh`, `slow-response.sh`, `service-unreachable.sh`, each referenced from its matching runbook.
+
+### V3 Architecture
+
+Same 11 services, now on minikube instead of EKS. Three new pipelines layered on top — logs, traces, and alerting:
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 45}, "themeVariables": {"fontSize": "14px"}}}%%
+flowchart TB
+    FE["frontend"]:::service
+    CART["cartservice"]:::service
+    CHK["checkoutservice"]:::service
+    OTHER["...8 more services"]:::service
+
+    PROMTAIL["Promtail\n(DaemonSet)"]:::logs
+    LOKI[("Loki\nfilesystem storage")]:::logs
+
+    OTEL["OTel Collector\n(deployment.yaml)"]:::trace
+    SPANM["spanmetrics connector\nderives RED metrics from spans"]:::trace
+    TEMPO[("Tempo\nfilesystem storage")]:::trace
+
+    PROM["Prometheus\n+ alert-rules.yaml"]:::observe
+    AM["Alertmanager"]:::observe
+    SLACK["Slack\n(webhook — unverified,\nplaceholder URL)"]:::deferred
+    GRAFANA["Grafana\nPrometheus + Loki + Tempo\ndatasources"]:::observe
+
+    FE -.->|"stdout logs"| PROMTAIL
+    CART -.->|"stdout logs"| PROMTAIL
+    CHK -.->|"stdout logs"| PROMTAIL
+    OTHER -.->|"stdout logs"| PROMTAIL
+    PROMTAIL --> LOKI
+
+    FE -->|"OTLP traces\n(opentelemetryCollector.enabled)"| OTEL
+    CART -->|"OTLP traces"| OTEL
+    CHK -->|"OTLP traces"| OTEL
+    OTHER -->|"OTLP traces"| OTEL
+    OTEL --> TEMPO
+    OTEL --> SPANM
+    SPANM -->|"RED metrics"| PROM
+
+    PROM -->|"HighRequestLatency\nHighErrorRate\nPodCrashLooping\nPodNotReady"| AM
+    AM -.->|"unverified"| SLACK
+
+    LOKI --> GRAFANA
+    TEMPO --> GRAFANA
+    PROM --> GRAFANA
+
+    classDef service fill:#a9d3a0,stroke:#5a9152,stroke-width:1.5px,color:#1a2b1c
+    classDef logs fill:#f3c98a,stroke:#c98a3a,stroke-width:1.5px,color:#3c2a10
+    classDef trace fill:#d4b8f0,stroke:#7c4dba,stroke-width:1.5px,color:#1a0a3c
+    classDef observe fill:#f0d4a8,stroke:#ba7c4d,stroke-width:1.5px,color:#3c1a0a
+    classDef deferred fill:#4b5563,stroke:#9ca3af,stroke-width:1.5px,color:#e5e7eb,stroke-dasharray: 5 5
+```
+
+**Logs (amber):** Promtail runs as a DaemonSet, tails every pod's stdout via `/var/log/pods/*/*.log`, ships to Loki. Queryable in Grafana by namespace/app/pod.
+
+**Traces + RED metrics (purple):** every service sends OTLP traces to the otel-collector (only once `opentelemetryCollector.enabled=true` is set — off by default in the base chart). The collector forwards traces to Tempo, and its `spanmetrics` connector derives real latency/error-rate metrics from those same spans, since the app never exposed native RED metrics.
+
+**Alerting (tan, dashed to Slack):** Prometheus evaluates 4 alert rules against the spanmetrics + kube-state-metrics series, firing into Alertmanager. Alertmanager→Slack is wired but **unverified** — placeholder webhook URL, dashed line marks it as the one unconfirmed hop in this diagram.
 
 ### Verified end-to-end on minikube
 
