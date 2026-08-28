@@ -113,13 +113,13 @@ spec:
             value: "{{ .Values.shoppingAssistantService.name }}:80"
           - name: ENV_PLATFORM
             value: {{ .Values.frontend.platform | quote }}
-          {{- if .Values.opentelemetryCollector.create }}
+          {{- if or .Values.opentelemetryCollector.create .Values.opentelemetryCollector.enabled }}
           - name: COLLECTOR_SERVICE_ADDR
             value: "{{ .Values.opentelemetryCollector.name }}:4317"
           - name: OTEL_SERVICE_NAME
             value: "{{ .Values.frontend.name }}"
           {{- end }}
-          {{- if .Values.googleCloudOperations.tracing }}
+          {{- if or .Values.googleCloudOperations.tracing .Values.opentelemetryCollector.enabled }}
           - name: ENABLE_TRACING
             value: "1"
           {{- end }}
@@ -225,7 +225,7 @@ spec:
     - ./{{ .Values.productCatalogService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.recommendationService.name }}.{{ .Release.Namespace }}.svc.cluster.local
     - ./{{ .Values.shippingService.name }}.{{ .Release.Namespace }}.svc.cluster.local
-    {{- if .Values.opentelemetryCollector.create }}
+    {{- if or .Values.opentelemetryCollector.create .Values.opentelemetryCollector.enabled }}
     - ./{{ .Values.opentelemetryCollector.name }}.{{ .Release.Namespace }}.svc.cluster.local
     {{- end }}
 {{- end }}

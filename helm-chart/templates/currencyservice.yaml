@@ -76,13 +76,13 @@ spec:
         env:
         - name: PORT
           value: "7000"
-        {{- if .Values.opentelemetryCollector.create }}
+        {{- if or .Values.opentelemetryCollector.create .Values.opentelemetryCollector.enabled }}
         - name: COLLECTOR_SERVICE_ADDR
           value: "{{ .Values.opentelemetryCollector.name }}:4317"
         - name: OTEL_SERVICE_NAME
           value: "{{ .Values.currencyService.name }}"
         {{- end }}
-        {{- if .Values.googleCloudOperations.tracing }}
+        {{- if or .Values.googleCloudOperations.tracing .Values.opentelemetryCollector.enabled }}
         - name: ENABLE_TRACING
           value: "1"
         {{- end }}
@@ -159,7 +159,7 @@ spec:
   egress:
   - hosts:
     - istio-system/*
-    {{- if .Values.opentelemetryCollector.create }}
+    {{- if or .Values.opentelemetryCollector.create .Values.opentelemetryCollector.enabled }}
     - ./{{ .Values.opentelemetryCollector.name }}.{{ .Release.Namespace }}.svc.cluster.local
     {{- end }}
 {{- end }}

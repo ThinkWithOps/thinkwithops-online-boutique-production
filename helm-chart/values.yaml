@@ -43,6 +43,7 @@ authorizationPolicies:
 
 opentelemetryCollector:
   create: false
+  enabled: true
   name: opentelemetrycollector
   # Specifies the project id for the otel collector. If set as "PROJECT_ID" (default value), an initContainer will automatically retrieve the project id value from the metadata server.
   projectId: "PROJECT_ID"
