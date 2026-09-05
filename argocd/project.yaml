@@ -25,11 +25,12 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: online-boutique-prod
 
-  # No cluster-scoped resources are managed by this project: Argo Rollouts,
-  # Sealed Secrets, and ArgoCD itself are installed as cluster infra outside
-  # this AppProject (see argocd/install/README.md, sealed-secrets/install/README.md),
-  # not as Applications this project can create/modify.
-  clusterResourceWhitelist: []
+  # CreateNamespace=true requires ArgoCD to create each destination Namespace.
+  # Namespace is the only cluster-scoped kind this project may manage. Argo
+  # Rollouts, Sealed Secrets, and ArgoCD remain bootstrap infrastructure.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
 
   namespaceResourceWhitelist:
     - group: ""

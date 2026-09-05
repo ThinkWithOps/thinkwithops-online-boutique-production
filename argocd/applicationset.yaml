@@ -45,7 +45,9 @@ spec:
       project: online-boutique
       source:
         repoURL: https://github.com/ThinkWithOps/thinkwithops-online-boutique-production.git
-        targetRevision: main
+        # V4 is verified from its release branch before merge. Change this to
+        # main after the branch is merged; never point a live demo at local files.
+        targetRevision: v4-gitops-argocd
         path: helm-chart
         helm:
           valueFiles:
