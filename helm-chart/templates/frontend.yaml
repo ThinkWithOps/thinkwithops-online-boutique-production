@@ -27,6 +27,7 @@ metadata:
   {{- end }}
 ---
 {{- end }}
+{{- if not .Values.frontend.rollouts.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,7 +35,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.frontend.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
+  replicas: {{ .Values.frontend.replicaCount | default 1 }}
   selector:
     matchLabels:
       app: {{ .Values.frontend.name }}
@@ -135,6 +139,7 @@ spec:
             value: {{ .Values.frontend.singleSharedSession | quote }}
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

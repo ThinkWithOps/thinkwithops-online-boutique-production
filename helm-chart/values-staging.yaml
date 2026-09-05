@@ -1,0 +1,57 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# GitOps "staging" environment overlay (namespace: online-boutique-staging).
+# Layered on top of helm-chart/values.yaml, same pattern as values-dev.yaml:
+#
+#   helm upgrade --install online-boutique helm-chart/ \
+#     -f helm-chart/values.yaml -f helm-chart/values-staging.yaml \
+#     --namespace online-boutique-staging --create-namespace
+#
+# ArgoCD's ApplicationSet generates staging with syncPolicy.automated OMITTED
+# (manual sync only) and selfHeal left off by the same omission -- ArgoCD ties
+# selfHeal to automated sync, so a manually-synced app can't self-heal even if
+# the flag were set; drift here surfaces as OutOfSync and stays until someone
+# runs `argocd app sync online-boutique-staging`. See docs/environment-promotion.md.
+# 2 replicas + light autoscaling here (vs dev's flat 1) so staging is a closer
+# rehearsal of prod's canary/rollback behavior without prod's blast radius.
+
+frontend:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  rollouts:
+    enabled: true
+    steps:
+      - setWeight: 10
+        pauseSeconds: 30
+      - setWeight: 50
+        pauseSeconds: 30
+      - setWeight: 100
+
+adService: { replicaCount: 2 }
+cartService: { replicaCount: 2 }
+checkoutService:
+  replicaCount: 2
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 4, targetCPUUtilizationPercentage: 70 }
+currencyService: { replicaCount: 2 }
+emailService: { replicaCount: 1 }
+paymentService: { replicaCount: 2 }
+productCatalogService: { replicaCount: 2 }
+recommendationService: { replicaCount: 1 }
+shippingService: { replicaCount: 1 }
+loadGenerator: { replicaCount: 1 }

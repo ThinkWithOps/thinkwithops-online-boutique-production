@@ -1,0 +1,146 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# V4 GitOps CI: build the changed service's image, scan it with Trivy, push to
+# ECR (reusing the OIDC role from terraform-aws/iam.tf, same as
+# aws-eks-deploy.yaml), then open a PR bumping that image's tag in
+# helm-chart/values-dev.yaml. It never runs `kubectl`/`helm apply` -- ArgoCD's
+# dev Application (automated + selfHeal) picks up the merged tag bump on its
+# own. Promotion from dev into staging/prod is a separate, manual step
+# (docs/environment-promotion.md), not something this workflow does.
+#
+# Limitation (see docs/gitops-architecture.md "Limitations"): this repo's V4
+# target is a single local minikube cluster, which cannot pull from ECR without
+# imagePullSecrets wired up separately. This workflow is written the way a real
+# EKS-backed GitOps pipeline would be; running the actual minikube canary/drift
+# verification in this repo instead used `eval $(minikube docker-env) && docker
+# build` to load images straight into minikube's own Docker daemon, bypassing
+# ECR entirely. Wiring minikube -> ECR pull auth is future work, not done here.
+
+name: "GitOps: build, scan, bump image tag"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to build (matches src/<service>)"
+        required: true
+
+permissions:
+  id-token: write # OIDC to AWS
+  contents: write # to open the tag-bump PR
+  pull-requests: write
+
+env:
+  AWS_REGION: us-east-1
+  DEPLOY_ROLE_ARN: arn:aws:iam::928967253353:role/online-boutique-production-github-actions-deploy
+
+jobs:
+  detect-changed-service:
+    runs-on: ubuntu-24.04
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: |
+          if [ -n "${{ github.event.inputs.service }}" ]; then
+            echo "services=[\"${{ github.event.inputs.service }}\"]" >> "$GITHUB_OUTPUT"
+          else
+            CHANGED=$(git diff --name-only HEAD^ HEAD -- 'src/*/' | cut -d/ -f2 | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "services=$CHANGED" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-scan-push:
+    needs: detect-changed-service
+    if: needs.detect-changed-service.outputs.services != '[]'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changed-service.outputs.services) }}
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: tag
+        run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: src/${{ matrix.service }}
+          push: false
+          load: true
+          tags: ${{ steps.ecr-login.outputs.registry }}/${{ matrix.service }}:${{ steps.tag.outputs.tag }}
+
+      - name: Trivy scan (block on CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.ecr-login.outputs.registry }}/${{ matrix.service }}:${{ steps.tag.outputs.tag }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignorefile: .trivyignore
+
+      - name: Push image (scan passed)
+        uses: docker/build-push-action@v6
+        with:
+          context: src/${{ matrix.service }}
+          push: true
+          tags: ${{ steps.ecr-login.outputs.registry }}/${{ matrix.service }}:${{ steps.tag.outputs.tag }}
+
+  bump-dev-tag:
+    needs: [detect-changed-service, build-scan-push]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bump images.tag in values-dev.yaml
+        run: |
+          TAG="${{ needs.build-scan-push.outputs.tag }}"
+          yq -i ".images.tag = \"$TAG\"" helm-chart/values-dev.yaml
+
+      - name: Open PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: gitops/bump-dev-${{ needs.build-scan-push.outputs.tag }}
+          title: "gitops: bump dev image tag to ${{ needs.build-scan-push.outputs.tag }}"
+          commit-message: "gitops: bump dev image tag to ${{ needs.build-scan-push.outputs.tag }}"
+          body: |
+            Built and Trivy-scanned (CRITICAL/HIGH gate) from commit ${{ github.sha }}.
+            No `kubectl`/`helm apply` was run by this workflow -- ArgoCD's
+            `online-boutique-dev` Application (automated sync + selfHeal) applies
+            this once merged. Promotion to staging/prod is manual, see
+            docs/environment-promotion.md.
+          labels: gitops,automated

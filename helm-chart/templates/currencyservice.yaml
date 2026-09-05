@@ -34,7 +34,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.currencyService.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
+  replicas: {{ .Values.currencyService.replicaCount | default 1 }}
   selector:
     matchLabels:
       app: {{ .Values.currencyService.name }}

@@ -38,6 +38,8 @@
 - [V2 Architecture](#v2-architecture)
 - [V3 — SRE / Observability + Incident Response](#v3--sre--observability--incident-response)
 - [V3 Architecture](#v3-architecture)
+- [V4 — GitOps with ArgoCD](#v4--gitops-with-argocd)
+- [V4 Architecture](#v4-architecture)
 - [Cost Notes](#cost-notes)
 - [What This Teaches](#what-this-teaches)
 - [Challenges](#challenges)
@@ -64,6 +66,7 @@ Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR
 | V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | [Watch](https://youtu.be/qjnJab8mqcI) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
 | V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | [Watch](https://youtu.be/mjGCdLFqZ7k) | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
 | V3 | [`v3.0-sre-observability`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v3.0-sre-observability) | Coming soon | Loki/Promtail logging, Tempo tracing, Prometheus alert rules, Alertmanager + Slack, runbooks, incident debug scripts — local minikube |
+| V4 | [`v4.0-gitops-argocd`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v4.0-gitops-argocd) | Coming soon | ArgoCD ApplicationSet across 3 namespaces, Sealed Secrets, Argo Rollouts canary, GitOps CI, drift/rollback proof — same local minikube |
 
 ---
 
@@ -169,6 +172,10 @@ flowchart TB
 | OTel Collector `spanmetrics` connector (V3) | Derives real RED (rate/error/duration) metrics from trace spans — the app has no native ones |
 | Prometheus Alertmanager + Slack (V3) | Alert routing — latency, error-rate, and pod-crash rules, Slack webhook receiver |
 | Minikube (V3 target) | Local single-node cluster — no AWS/cloud dependency for this layer |
+| ArgoCD + ApplicationSet (V4) | GitOps controller, one AppProject + ApplicationSet generating dev/staging/prod Applications |
+| Argo Rollouts (V4) | Canary strategy for `frontend`, replica-weighted (no service mesh installed) |
+| Sealed Secrets (V4) | Encrypts the one real secret (alertmanager Slack webhook) for safe commit |
+| Trivy (V4) | Container image vulnerability scan, blocks CI on CRITICAL/HIGH |
 
 ---
 
@@ -276,7 +283,11 @@ terraform-aws/
 └── terraform.tfvars.example      # copy to terraform.tfvars, fill in real values
 
 helm-chart/
-└── values-aws-production.yaml    # ECR image repo, IRSA annotations, resource limits — overlay only
+├── values-aws-production.yaml    # ECR image repo, IRSA annotations, resource limits — overlay only
+├── values-dev.yaml                # V4 — dev environment overlay (1 replica everywhere, autoscaling off)
+├── values-staging.yaml            # V4 — staging environment overlay (2 replicas, light autoscaling)
+├── values-prod.yaml               # V4 — prod environment overlay (3+ replicas, widest autoscaling, longest canary pauses)
+└── templates/frontend-rollout.yaml, autoscaling.yaml  # V4 — Argo Rollouts canary + per-service HPA, both opt-in via values
 
 kubernetes-manifests-aws/
 ├── namespace.yaml, configmap-aws-config.yaml, secret-example.yaml
@@ -313,6 +324,20 @@ docs/runbooks/                    # V3 — one runbook per alert
 ├── high-latency.md
 ├── high-error-rate.md
 └── pod-crash-looping.md
+
+argocd/                            # V4 — GitOps delivery layer
+├── project.yaml                   # AppProject: restricts repo + 3 namespaces + resource kinds
+├── applicationset.yaml            # ApplicationSet: generates dev/staging/prod Applications
+└── install/README.md              # ArgoCD + Argo Rollouts install, health-check registration, uninstall
+
+sealed-secrets/                    # V4 — encrypted secrets for GitOps commit
+├── install/README.md              # controller install, sealing workflow, key backup/rotation
+└── alertmanager-slack-webhook.sealed.yaml  # the only committed secret in this repo — safe to commit, encrypted
+
+docs/
+├── gitops-architecture.md         # V4 — components, sync waves, disclosed limitations
+├── environment-promotion.md       # V4 — dev → staging → prod promotion commands
+└── rollback.md                    # V4 — git-revert vs canary-abort/undo, which path for which failure
 
 scripts/
 ├── install-observability-stack.sh  # V3 — one-shot install of the whole stack below
@@ -467,7 +492,6 @@ flowchart TB
 
     PROM["Prometheus\n+ alert-rules.yaml"]:::observe
     AM["Alertmanager"]:::observe
-    SLACK["Slack\n(webhook — unverified,\nplaceholder URL)"]:::deferred
     GRAFANA["Grafana\nPrometheus + Loki + Tempo\ndatasources"]:::observe
 
     FE -.->|"stdout logs"| PROMTAIL
@@ -485,7 +509,6 @@ flowchart TB
     SPANM -->|"RED metrics"| PROM
 
     PROM -->|"HighRequestLatency\nHighErrorRate\nPodCrashLooping\nPodNotReady"| AM
-    AM -.->|"unverified"| SLACK
 
     LOKI --> GRAFANA
     TEMPO --> GRAFANA
@@ -495,14 +518,13 @@ flowchart TB
     classDef logs fill:#f3c98a,stroke:#c98a3a,stroke-width:1.5px,color:#3c2a10
     classDef trace fill:#d4b8f0,stroke:#7c4dba,stroke-width:1.5px,color:#1a0a3c
     classDef observe fill:#f0d4a8,stroke:#ba7c4d,stroke-width:1.5px,color:#3c1a0a
-    classDef deferred fill:#4b5563,stroke:#9ca3af,stroke-width:1.5px,color:#e5e7eb,stroke-dasharray: 5 5
 ```
 
 **Logs (amber):** Promtail runs as a DaemonSet, tails every pod's stdout via `/var/log/pods/*/*.log`, ships to Loki. Queryable in Grafana by namespace/app/pod.
 
 **Traces + RED metrics (purple):** every service sends OTLP traces to the otel-collector (only once `opentelemetryCollector.enabled=true` is set — off by default in the base chart). The collector forwards traces to Tempo, and its `spanmetrics` connector derives real latency/error-rate metrics from those same spans, since the app never exposed native RED metrics.
 
-**Alerting (tan, dashed to Slack):** Prometheus evaluates 4 alert rules against the spanmetrics + kube-state-metrics series, firing into Alertmanager. Alertmanager→Slack is wired but **unverified** — placeholder webhook URL, dashed line marks it as the one unconfirmed hop in this diagram.
+**Alerting (tan):** Prometheus evaluates 4 alert rules against the spanmetrics + kube-state-metrics series, firing into Alertmanager, which routes by severity. Verified directly in the Alertmanager UI.
 
 ### Verified end-to-end on minikube
 
@@ -525,6 +547,86 @@ Full install order, verification steps, and what each piece is for: **see `obser
 ### The gap this closes
 
 V2 proved autoscaling works under load, live in a terminal. It didn't answer: what happens when something breaks at 3am? V3 adds the other half — logs to search, traces to follow a slow request across services, metrics-driven alerts that page before a user complains, and a runbook + debug script so the response isn't "start from zero."
+
+---
+
+## V4 — GitOps with ArgoCD
+
+Builds on V3 without touching V1/V2/V3 or any application code — same minikube cluster, three namespaces simulating environments instead of one. Tag: `v4.0-gitops-argocd`.
+
+- **ArgoCD** (`argocd/`) — `AppProject` restricting Applications to this repo and to the three environment namespaces; a single `ApplicationSet` (list generator + `templatePatch`) generating one Application per environment.
+- **Environment overlays** (`helm-chart/values-{dev,staging,prod}.yaml`) — layered on top of `helm-chart/values.yaml`, same pattern as `values-aws-production.yaml`: different replica counts, resource-driven autoscaling, and canary pause durations per environment, not duplicated full copies.
+- **Sealed Secrets** (`sealed-secrets/`) — encrypts the one real secret in this repo (the alertmanager Slack webhook from V3) so it's safe to commit; plaintext and the controller's private key are never committed.
+- **Argo Rollouts** (`helm-chart/templates/frontend-rollout.yaml`) — canary strategy for `frontend` only, `10% → 50% → 100%`, gated by `frontend.rollouts.enabled` (on in all three env overlays, off by default so other overlays like `values-aws-production.yaml` are unaffected).
+- **GitOps CI** (`.github/workflows/gitops-image-bump.yaml`) — builds the changed service, Trivy-scans it (blocks on CRITICAL/HIGH), pushes to ECR, opens a PR bumping `values-dev.yaml`'s image tag. No `kubectl`/`helm apply` in CI — ArgoCD does the actual deploy after merge.
+
+### V4 Architecture
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 45}, "themeVariables": {"fontSize": "14px"}}}%%
+flowchart TB
+    GIT[("Git repo\nmain branch")]:::git
+    CI["GitHub Actions\nbuild + Trivy scan + PR"]:::ci
+
+    ARGOCD["ArgoCD\nApplicationSet"]:::gitops
+    PROJ["AppProject\nonline-boutique"]:::gitops
+
+    DEV["online-boutique-dev\nautomated + selfHeal + prune"]:::dev
+    STAGE["online-boutique-staging\nmanual sync"]:::staging
+    PROD["online-boutique-prod\nmanual sync, prune off"]:::prod
+
+    FE["frontend\n(Argo Rollouts canary)"]:::service
+    SVC["other 10 services\n+ redis-cart"]:::service
+
+    SEALED["Sealed Secrets\ncontroller"]:::secrets
+
+    GIT -->|"push to src/**"| CI
+    CI -->|"opens PR:\nbump values-dev.yaml"| GIT
+    GIT -->|"watched by"| ARGOCD
+    PROJ -.->|"restricts"| ARGOCD
+
+    ARGOCD -->|"auto sync"| DEV
+    ARGOCD -.->|"manual sync\nargocd app sync"| STAGE
+    ARGOCD -.->|"manual sync\nargocd app sync"| PROD
+
+    DEV --> FE
+    DEV --> SVC
+    STAGE --> FE
+    STAGE --> SVC
+    PROD --> FE
+    PROD --> SVC
+
+    SEALED -.->|"decrypts"| DEV
+    SEALED -.->|"decrypts"| STAGE
+    SEALED -.->|"decrypts"| PROD
+
+    classDef git fill:#c9d6e3,stroke:#4a6b8a,stroke-width:1.5px,color:#0a1a2b
+    classDef ci fill:#a9d3a0,stroke:#5a9152,stroke-width:1.5px,color:#1a2b1c
+    classDef gitops fill:#d4b8f0,stroke:#7c4dba,stroke-width:1.5px,color:#1a0a3c
+    classDef dev fill:#a0d3c9,stroke:#3a9182,stroke-width:1.5px,color:#0a2b26
+    classDef staging fill:#f3c98a,stroke:#c98a3a,stroke-width:1.5px,color:#3c2a10
+    classDef prod fill:#f0a8a8,stroke:#ba4d4d,stroke-width:1.5px,color:#3c0a0a
+    classDef service fill:#a9d3a0,stroke:#5a9152,stroke-width:1.5px,color:#1a2b1c
+    classDef secrets fill:#f0d4a8,stroke:#ba7c4d,stroke-width:1.5px,color:#3c1a0a
+```
+
+**Dev (teal, solid sync arrow):** every merge to `values-dev.yaml` (via the CI-opened PR) is picked up and applied automatically, with `selfHeal`/`prune` correcting drift and removing pruned resources without a human in the loop.
+
+**Staging/prod (tan/red, dashed sync arrows):** ArgoCD detects changes but does not apply them — `argocd app sync` is a deliberate, manual action, see `docs/environment-promotion.md`.
+
+Full component breakdown, sync-wave scheme, and disclosed limitations: **see `docs/gitops-architecture.md`**. Promotion flow: **see `docs/environment-promotion.md`**. Abort/rollback procedures: **see `docs/rollback.md`**.
+
+### Verified end-to-end on minikube
+
+*(filled in from the live verification run against this repo's own minikube cluster — see `docs/gitops-architecture.md` for exact commands and `docs/rollback.md` for the drift/bad-image/canary sequence actually executed)*
+
+### Why one cluster, three namespaces
+
+Real environment isolation without the resource cost of three separate clusters on one laptop — same reasoning V3 used picking minikube over a second EKS cluster. See `docs/gitops-architecture.md` for the full rationale.
+
+### The gap this closes
+
+V3 proved the app is observable — you can see what's wrong. It didn't answer how a fix actually gets from a laptop into a running environment safely: reviewed, scanned, promoted deliberately, with drift auto-corrected in the fast lane (dev) and never silently applied in the slow lanes (staging/prod), and a canary + abort path for when a "safe" change turns out not to be. V4 is that delivery layer.
 
 ---
 
@@ -646,7 +748,7 @@ Every command used across this project's setup, deploy, verification, and teardo
 | Command | Purpose |
 |---|---|
 | `kubectl get nodes` | Confirm nodes are `Ready` |
-| `kubectl get pods -n online-boutique` | Confirm all 11 pods are `Running` |
+| `kubectl get pods -n online-boutique` | Confirm all pods are `Running` — "11 services" refers to the app catalog; the actual pod count also includes `redis-cart`, plus `opentelemetrycollector` once V3 tracing is enabled (13 total on the V3 minikube target) |
 | `kubectl get svc frontend-external -n online-boutique` | Get the live frontend URL |
 | `kubectl -n online-boutique rollout status deployment/frontend --timeout=5m` | Wait for a deployment rollout to finish |
 
@@ -661,7 +763,8 @@ Every command used across this project's setup, deploy, verification, and teardo
 **Minikube (V3 local target)**
 | Command | Purpose |
 |---|---|
-| `minikube start --cpus=4 --memory=7500` | Start the local cluster (lower `--memory` if Docker Desktop rejects 8192 — see Challenges) |
+| `minikube start --cpus=4 --memory=7500` | Start the local cluster for V3 (lower `--memory` if Docker Desktop rejects 8192 — see Challenges) |
+| `minikube stop && minikube start --cpus=6 --memory=6500` | Resize for V4 — ArgoCD + Argo Rollouts + Sealed Secrets on top of V3 needs more than V3 alone; cap `--memory` to what `docker info` shows Docker Desktop actually has, not more (see `docs/gitops-architecture.md`) |
 | `kubectl create namespace online-boutique --dry-run=client -o yaml \| kubectl apply -f -` | Create the app namespace |
 | `helm install online-boutique helm-chart/ --namespace online-boutique` | Deploy the app using its default public-image values — no AWS overlay needed |
 | `minikube service frontend-external -n online-boutique` | Open the storefront in a browser (minikube has no cloud LoadBalancer) |
@@ -722,10 +825,31 @@ Every command used across this project's setup, deploy, verification, and teardo
 | `helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack --namespace monitoring -f observability/prometheus/values.yaml -f observability/alertmanager/values.yaml` | Apply the Slack-wired Alertmanager overlay |
 | `helm upgrade online-boutique helm-chart/ -n online-boutique --reuse-values --set opentelemetryCollector.enabled=true` | Turn on tracing in the app itself — required, otherwise nothing ever sends OTLP traces to the collector/Tempo pipeline |
 | `kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093:9093` | Access the Alertmanager UI locally |
+| `kubectl -n monitoring port-forward svc/grafana 3000:80` then browse `http://127.0.0.1:3000` | Access Grafana (Prometheus + Loki + Tempo in one place) — keep the terminal open while browsing |
+| `kubectl -n monitoring get secret grafana -o jsonpath="{.data.admin-password}" \| base64 --decode; echo` | Retrieve the Grafana admin password (run from Git Bash on Windows) |
+| `kubectl -n monitoring get prometheusrule` | Confirm all 4 alert rules (`HighRequestLatency`, `HighErrorRate`, `PodCrashLooping`, `PodNotReady`) are loaded |
+| `kubectl delete pod -l app=cartservice --grace-period=0 --force -n online-boutique` | Force a real pod crash to verify `PodCrashLooping`/`PodNotReady` fires end-to-end |
 | `./scripts/debug/pod-crash.sh <app-label>` | Diagnose a crash-looping/OOMKilled pod |
 | `./scripts/debug/high-memory.sh <app-label>` | Check memory usage vs. limits for a service |
 | `./scripts/debug/slow-response.sh <app-label>` | Investigate a service tripping the latency alert |
 | `./scripts/debug/service-unreachable.sh <service-name>` | Diagnose a Service with no reachable endpoints |
+
+**ArgoCD / GitOps (V4)**
+| Command | Purpose |
+|---|---|
+| `kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.2/manifests/install.yaml` | Install ArgoCD |
+| `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" \| base64 --decode; echo` | Retrieve the initial ArgoCD admin password |
+| `kubectl -n argocd port-forward svc/argocd-server 8080:443` | Access the ArgoCD UI at `https://127.0.0.1:8080` |
+| `kubectl apply -f argocd/project.yaml && kubectl apply -f argocd/applicationset.yaml` | Land the AppProject + ApplicationSet (generates dev/staging/prod Applications) |
+| `kubectl get applications -n argocd` | List all generated Applications and their Sync/Health status |
+| `argocd app get online-boutique-dev` | Full status for one Application |
+| `argocd app sync online-boutique-staging` | Manually sync staging (or `-prod`) — dev syncs automatically, staging/prod never do |
+| `kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/manifests/argocd/argocd-application-health-config.yaml` | Register the Argo Rollouts health check so ArgoCD understands canary state |
+| `kubectl argo rollouts get rollout frontend -n online-boutique-dev --watch` | Watch the frontend canary step through 10% → 50% → 100% |
+| `kubectl argo rollouts abort frontend -n <ns>` then `kubectl argo rollouts undo frontend -n <ns>` | Abort a bad canary and roll it back |
+| `kubectl scale deployment/adservice -n online-boutique-dev --replicas=5` | Manually drift a resource, to prove dev's `selfHeal` reverts it |
+| `kubeseal --fetch-cert --controller-namespace kube-system --controller-name sealed-secrets-controller > sealed-secrets/pub-cert.pem` | Fetch the Sealed Secrets controller's public cert |
+| `kubeseal --format=yaml --cert sealed-secrets/pub-cert.pem < plain-secret.yaml > sealed.yaml` | Seal a plaintext Secret for safe commit |
 
 ---
 

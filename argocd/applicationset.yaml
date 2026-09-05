@@ -1,0 +1,70 @@
+# One ApplicationSet, one Application per environment. Apply after project.yaml:
+#   kubectl apply -f argocd/applicationset.yaml
+#
+# This is a plain ArgoCD manifest (not a Helm template) -- kubectl apply it as-is.
+#
+# `templatePatch` (ArgoCD >=2.6) is used instead of a raw `{{- if }}` inside
+# `template.spec` directly: `template.spec.syncPolicy` is a structured field, and
+# a bare `{{- if }}` spanning structured YAML keys does not parse as valid YAML
+# at all (breaks `kubectl apply` before ArgoCD ever sees it -- caught locally
+# with a plain yaml.safe_load before this was applied). `templatePatch` is a
+# plain multi-line STRING field, rendered per generator element and then merged
+# over `template`, so the conditional lives inside a string scalar and the file
+# stays valid YAML throughout.
+#
+# IMPORTANT nuance (also in docs/gitops-architecture.md): ArgoCD only applies
+# selfHeal/prune under an automated sync policy. Dev's patch adds a full
+# `automated:` block (fast feedback, safe to auto-correct/auto-delete).
+# Staging/prod's patch adds NO `automated:` block -- sync stays fully manual,
+# via `argocd app sync online-boutique-<env>`, which is what "manual promotion"
+# for those two environments actually means.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: online-boutique
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+            namespace: online-boutique-dev
+          - env: staging
+            namespace: online-boutique-staging
+          - env: prod
+            namespace: online-boutique-prod
+
+  template:
+    metadata:
+      name: "online-boutique-{{.env}}"
+      labels:
+        env: "{{.env}}"
+    spec:
+      project: online-boutique
+      source:
+        repoURL: https://github.com/ThinkWithOps/thinkwithops-online-boutique-production.git
+        targetRevision: main
+        path: helm-chart
+        helm:
+          valueFiles:
+            - values.yaml
+            - "values-{{.env}}.yaml"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{.namespace}}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ApplyOutOfSyncOnly=true
+
+  templatePatch: |
+    spec:
+      syncPolicy:
+        {{- if eq .env "dev" }}
+        automated:
+          selfHeal: true
+          prune: true
+          allowEmpty: false
+        {{- end }}

@@ -1,0 +1,64 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# GitOps "prod" environment overlay (namespace: online-boutique-prod). Layered
+# on top of helm-chart/values.yaml, same pattern as values-dev.yaml:
+#
+#   helm upgrade --install online-boutique helm-chart/ \
+#     -f helm-chart/values.yaml -f helm-chart/values-prod.yaml \
+#     --namespace online-boutique-prod --create-namespace
+#
+# ArgoCD's ApplicationSet generates prod with syncPolicy.automated OMITTED
+# (manual sync only, same reasoning as staging) and prune left off -- "prune
+# enabled where safe" means dev only; a stray manually-applied resource in prod
+# during an incident should never be silently deleted by a sync. Promotion into
+# prod is a deliberate `argocd app sync online-boutique-prod` after staging has
+# been verified Healthy, per docs/environment-promotion.md.
+#
+# Highest replica counts + widest autoscaling range + longest canary pauses of
+# the three environments, since prod is where a bad rollout costs the most and
+# should be caught in the smallest-weight step before it reaches 100%.
+
+frontend:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 65
+  rollouts:
+    enabled: true
+    steps:
+      - setWeight: 10
+        pauseSeconds: 120
+      - setWeight: 50
+        pauseSeconds: 120
+      - setWeight: 100
+
+adService: { replicaCount: 2 }
+cartService: { replicaCount: 3 }
+checkoutService:
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 6, targetCPUUtilizationPercentage: 65 }
+currencyService:
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 6, targetCPUUtilizationPercentage: 65 }
+emailService: { replicaCount: 2 }
+paymentService: { replicaCount: 2 }
+productCatalogService:
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 6, targetCPUUtilizationPercentage: 65 }
+recommendationService: { replicaCount: 2 }
+shippingService: { replicaCount: 2 }
+loadGenerator: { replicaCount: 1 }

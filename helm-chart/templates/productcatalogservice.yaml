@@ -34,7 +34,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.productCatalogService.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
+  replicas: {{ .Values.productCatalogService.replicaCount | default 1 }}
   selector:
     matchLabels:
       app: {{ .Values.productCatalogService.name }}

@@ -32,7 +32,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.cartService.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
+  replicas: {{ .Values.cartService.replicaCount | default 1 }}
   selector:
     matchLabels:
       app: {{ .Values.cartService.name }}
@@ -220,6 +223,8 @@ kind: Deployment
 metadata:
   name: {{ .Values.cartDatabase.inClusterRedis.name }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   selector:
     matchLabels:

@@ -34,7 +34,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.checkoutService.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
+  replicas: {{ .Values.checkoutService.replicaCount | default 1 }}
   selector:
     matchLabels:
       app: {{ .Values.checkoutService.name }}

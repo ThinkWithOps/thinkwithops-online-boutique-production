@@ -1,0 +1,78 @@
+# Copyright 2026 ThinkWithOps
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# One HorizontalPodAutoscaler per service, rendered only when that service's
+# `<service>.autoscaling.enabled` is true. Each service's autoscaling block
+# is optional and layers over autoscalingDefaults; set per environment in
+# values-dev/staging/prod.yaml. Requires metrics-server in-cluster for the CPU
+# target to actually scale (minikube: `minikube addons enable metrics-server`).
+{{- $services := list
+  (dict "key" "adService" "target" "Deployment")
+  (dict "key" "cartService" "target" "Deployment")
+  (dict "key" "checkoutService" "target" "Deployment")
+  (dict "key" "currencyService" "target" "Deployment")
+  (dict "key" "emailService" "target" "Deployment")
+  (dict "key" "paymentService" "target" "Deployment")
+  (dict "key" "productCatalogService" "target" "Deployment")
+  (dict "key" "recommendationService" "target" "Deployment")
+  (dict "key" "shippingService" "target" "Deployment")
+}}
+{{- range $svc := $services }}
+{{- $vals := index $.Values $svc.key }}
+{{- if and $vals $vals.autoscaling $vals.autoscaling.enabled }}
+{{- $defaults := $.Values.autoscalingDefaults }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $vals.name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: {{ $svc.target }}
+    name: {{ $vals.name }}
+  minReplicas: {{ $vals.autoscaling.minReplicas | default $defaults.minReplicas }}
+  maxReplicas: {{ $vals.autoscaling.maxReplicas | default $defaults.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $vals.autoscaling.targetCPUUtilizationPercentage | default $defaults.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}
+{{- if and .Values.frontend.autoscaling .Values.frontend.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: {{ if .Values.frontend.rollouts.enabled }}argoproj.io/v1alpha1{{ else }}apps/v1{{ end }}
+    kind: {{ if .Values.frontend.rollouts.enabled }}Rollout{{ else }}Deployment{{ end }}
+    name: {{ .Values.frontend.name }}
+  minReplicas: {{ .Values.frontend.autoscaling.minReplicas | default .Values.autoscalingDefaults.minReplicas }}
+  maxReplicas: {{ .Values.frontend.autoscaling.maxReplicas | default .Values.autoscalingDefaults.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.frontend.autoscaling.targetCPUUtilizationPercentage | default .Values.autoscalingDefaults.targetCPUUtilizationPercentage }}
+{{- end }}

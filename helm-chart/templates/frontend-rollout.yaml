@@ -1,0 +1,149 @@
+# Copyright 2026 ThinkWithOps
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Argo Rollouts canary for frontend. Mirrors templates/frontend.yaml's Deployment
+# pod spec exactly. Only rendered when .Values.frontend.rollouts.enabled is true,
+# and requires the Argo Rollouts CRDs/controller installed in-cluster (argocd/README.md).
+#
+# No service mesh or ingress controller is installed in this repo's minikube target,
+# so this uses Rollouts' basic canary strategy without trafficRouting: traffic split is
+# replica-weighted via the existing frontend ClusterIP Service, not exact percentage
+# routing. See docs/gitops-architecture.md "Limitations" for detail.
+{{- if .Values.frontend.create }}
+{{- if .Values.frontend.rollouts.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ .Values.frontend.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.frontend.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  replicas: {{ .Values.frontend.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ .Values.frontend.name }}
+  strategy:
+    canary:
+      steps:
+        {{- range .Values.frontend.rollouts.steps }}
+        {{- if hasKey . "setWeight" }}
+        - setWeight: {{ .setWeight }}
+        {{- end }}
+        {{- if hasKey . "pauseSeconds" }}
+        - pause:
+            duration: {{ .pauseSeconds }}s
+        {{- end }}
+        {{- end }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.frontend.name }}
+      annotations:
+        sidecar.istio.io/rewriteAppHTTPProbers: "true"
+    spec:
+      {{- if .Values.serviceAccounts.create }}
+      serviceAccountName: {{ .Values.frontend.name }}
+      {{- else }}
+      serviceAccountName: default
+      {{- end }}
+      {{- if .Values.securityContext.enable }}
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        {{- if .Values.seccompProfile.enable }}
+        seccompProfile:
+          type: {{ .Values.seccompProfile.type }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: server
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+          image: {{ .Values.images.repository }}/{{ .Values.frontend.name }}:{{ .Values.images.tag | default .Chart.AppVersion }}
+          ports:
+          - containerPort: 8080
+          readinessProbe:
+            timeoutSeconds: 5
+            initialDelaySeconds: 10
+            httpGet:
+              path: "/_healthz"
+              port: 8080
+              httpHeaders:
+              - name: "Cookie"
+                value: "shop_session-id=x-readiness-probe"
+          livenessProbe:
+            failureThreshold: 6
+            timeoutSeconds: 5
+            initialDelaySeconds: 10
+            httpGet:
+              path: "/_healthz"
+              port: 8080
+              httpHeaders:
+              - name: "Cookie"
+                value: "shop_session-id=x-liveness-probe"
+          env:
+          - name: PORT
+            value: "8080"
+          - name: PRODUCT_CATALOG_SERVICE_ADDR
+            value: "{{ .Values.productCatalogService.name }}:3550"
+          - name: CURRENCY_SERVICE_ADDR
+            value: "{{ .Values.currencyService.name }}:7000"
+          - name: CART_SERVICE_ADDR
+            value: "{{ .Values.cartService.name }}:7070"
+          - name: RECOMMENDATION_SERVICE_ADDR
+            value: "{{ .Values.recommendationService.name }}:8080"
+          - name: SHIPPING_SERVICE_ADDR
+            value: "{{ .Values.shippingService.name }}:50051"
+          - name: CHECKOUT_SERVICE_ADDR
+            value: "{{ .Values.checkoutService.name }}:5050"
+          - name: AD_SERVICE_ADDR
+            value: "{{ .Values.adService.name }}:9555"
+          - name: SHOPPING_ASSISTANT_SERVICE_ADDR
+            value: "{{ .Values.shoppingAssistantService.name }}:80"
+          - name: ENV_PLATFORM
+            value: {{ .Values.frontend.platform | quote }}
+          {{- if or .Values.opentelemetryCollector.create .Values.opentelemetryCollector.enabled }}
+          - name: COLLECTOR_SERVICE_ADDR
+            value: "{{ .Values.opentelemetryCollector.name }}:4317"
+          - name: OTEL_SERVICE_NAME
+            value: "{{ .Values.frontend.name }}"
+          {{- end }}
+          {{- if or .Values.googleCloudOperations.tracing .Values.opentelemetryCollector.enabled }}
+          - name: ENABLE_TRACING
+            value: "1"
+          {{- end }}
+          {{- if .Values.googleCloudOperations.profiler }}
+          - name: ENABLE_PROFILER
+            value: "1"
+          {{- end }}
+          - name: CYMBAL_BRANDING
+            value: {{ .Values.frontend.cymbalBranding | quote }}
+          - name: ENABLE_ASSISTANT
+            value: {{ .Values.shoppingAssistantService.create | quote }}
+          - name: ENABLE_SINGLE_SHARED_SESSION
+            value: {{ .Values.frontend.singleSharedSession | quote }}
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+{{- end }}
+{{- end }}

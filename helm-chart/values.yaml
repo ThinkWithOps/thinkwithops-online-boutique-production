@@ -60,9 +60,20 @@ seccompProfile:
 securityContext:
   enable: true
 
+# Per-service HorizontalPodAutoscaler. Off by default (matches V2's separate HPA
+# manifests under kubernetes-manifests-aws/); values-dev/staging/prod.yaml turn
+# this on selectively per service via the same key path, e.g.:
+#   frontend: { autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70 } }
+autoscalingDefaults:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
 adService:
   create: true
   name: adservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 200m
@@ -74,6 +85,7 @@ adService:
 cartService:
   create: true
   name: cartservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 200m
@@ -85,6 +97,7 @@ cartService:
 checkoutService:
   create: true
   name: checkoutservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 100m
@@ -96,6 +109,7 @@ checkoutService:
 currencyService:
   create: true
   name: currencyservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 100m
@@ -107,6 +121,7 @@ currencyService:
 emailService:
   create: true
   name: emailservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 100m
@@ -123,6 +138,19 @@ frontend:
   # One of: local, gcp, aws, azure, onprem, alibaba. When not set, defaults to "local" unless running in GKE, otherwise auto-sets to gcp.
   platform: local
   singleSharedSession: false
+  replicaCount: 1
+  # When true, renders an Argo Rollouts `Rollout` (frontend-rollout.yaml) instead of a
+  # plain Deployment, enabling canary promotion. Requires the Argo Rollouts CRDs/controller
+  # installed in-cluster. Off by default so existing overlays (values-aws-production.yaml etc.)
+  # keep working unchanged.
+  rollouts:
+    enabled: false
+    steps:
+      - setWeight: 10
+        pauseSeconds: 30
+      - setWeight: 50
+        pauseSeconds: 30
+      - setWeight: 100
   virtualService:
     create: false
     hosts:
@@ -144,6 +172,7 @@ loadGenerator:
   create: true
   name: loadgenerator
   checkFrontendInitContainer: true
+  replicaCount: 1
   resources:
     requests:
       cpu: 300m
@@ -155,6 +184,7 @@ loadGenerator:
 paymentService:
   create: true
   name: paymentservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 100m
@@ -168,6 +198,7 @@ productCatalogService:
   name: productcatalogservice
   # Specifies an extra latency to any request on productcatalogservice, by default no extra latency.
   extraLatency: ""
+  replicaCount: 1
   resources:
     requests:
       cpu: 100m
@@ -179,6 +210,7 @@ productCatalogService:
 recommendationService:
   create: true
   name: recommendationservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 100m
@@ -190,6 +222,7 @@ recommendationService:
 shippingService:
   create: true
   name: shippingservice
+  replicaCount: 1
   resources:
     requests:
       cpu: 100m

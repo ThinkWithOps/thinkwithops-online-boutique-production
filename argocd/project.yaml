@@ -1,0 +1,65 @@
+# AppProject restricting what the online-boutique GitOps Applications may do:
+# only this repo, only the three simulated-environment namespaces, only the
+# resource kinds this stack actually uses (core workloads + Argo Rollouts +
+# Sealed Secrets). Apply once, before applicationset.yaml:
+#   kubectl apply -f argocd/project.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: online-boutique
+  namespace: argocd
+spec:
+  description: >-
+    Online Boutique GitOps project (V4). Scopes every generated Application to
+    this repo and to the three dev/staging/prod simulation namespaces on the
+    single minikube cluster -- nothing else.
+
+  sourceRepos:
+    - https://github.com/ThinkWithOps/thinkwithops-online-boutique-production.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: online-boutique-dev
+    - server: https://kubernetes.default.svc
+      namespace: online-boutique-staging
+    - server: https://kubernetes.default.svc
+      namespace: online-boutique-prod
+
+  # No cluster-scoped resources are managed by this project: Argo Rollouts,
+  # Sealed Secrets, and ArgoCD itself are installed as cluster infra outside
+  # this AppProject (see argocd/install/README.md, sealed-secrets/install/README.md),
+  # not as Applications this project can create/modify.
+  clusterResourceWhitelist: []
+
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: ""
+      kind: PersistentVolumeClaim
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: argoproj.io
+      kind: Rollout
+    - group: argoproj.io
+      kind: AnalysisTemplate
+    - group: bitnami.com
+      kind: SealedSecret
+
+  roles:
+    - name: readonly
+      description: Read-only access for anyone browsing the ArgoCD UI/CLI.
+      policies:
+        - p, proj:online-boutique:readonly, applications, get, online-boutique/*, allow
+      groups: []

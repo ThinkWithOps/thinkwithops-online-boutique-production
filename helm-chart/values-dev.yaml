@@ -1,0 +1,52 @@
+# Copyright 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# GitOps "dev" environment overlay (namespace: online-boutique-dev) for the
+# single-cluster minikube V4 build. Layered on top of helm-chart/values.yaml,
+# never standalone:
+#
+#   helm upgrade --install online-boutique helm-chart/ \
+#     -f helm-chart/values.yaml -f helm-chart/values-dev.yaml \
+#     --namespace online-boutique-dev --create-namespace
+#
+# ArgoCD's ApplicationSet (argocd/applicationset.yaml) applies this exact
+# valueFiles pair for the dev-generated Application. Dev is the fast-feedback
+# environment: 1 replica everywhere, autoscaling off, automated sync + selfHeal
+# + prune all ON (argocd/applicationset.yaml), so a bad merge is both applied
+# and pruned automatically -- rollback is via git revert, not manual sync.
+
+frontend:
+  replicaCount: 1
+  rollouts:
+    enabled: true
+    steps:
+      - setWeight: 10
+        pauseSeconds: 15
+      - setWeight: 50
+        pauseSeconds: 15
+      - setWeight: 100
+
+adService: { replicaCount: 1 }
+cartService: { replicaCount: 1 }
+checkoutService: { replicaCount: 1 }
+currencyService: { replicaCount: 1 }
+emailService: { replicaCount: 1 }
+paymentService: { replicaCount: 1 }
+productCatalogService: { replicaCount: 1 }
+recommendationService: { replicaCount: 1 }
+shippingService: { replicaCount: 1 }
+loadGenerator: { replicaCount: 1 }
+
+# Autoscaling stays off in dev -- there's no load pattern here worth scaling to,
+# and it would just add noise to the drift/rollback demos this environment is for.
