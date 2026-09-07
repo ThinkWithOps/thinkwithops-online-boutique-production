@@ -174,7 +174,7 @@ flowchart TB
 | Minikube (V3 target) | Local single-node cluster — no AWS/cloud dependency for this layer |
 | ArgoCD + ApplicationSet (V4) | GitOps controller, one AppProject + ApplicationSet generating dev/staging/prod Applications |
 | Argo Rollouts (V4) | Canary strategy for `frontend`, replica-weighted (no service mesh installed) |
-| Sealed Secrets (V4) | Encrypts the one real secret (alertmanager Slack webhook) for safe commit |
+| Sealed Secrets (V4) | Controller plus workflow for sealing the Alertmanager Slack webhook; no real payload is committed |
 | Trivy (V4) | Container image vulnerability scan, blocks CI on CRITICAL/HIGH |
 
 ---
@@ -330,9 +330,8 @@ argocd/                            # V4 — GitOps delivery layer
 ├── applicationset.yaml            # ApplicationSet: generates dev/staging/prod Applications
 └── install/README.md              # ArgoCD + Argo Rollouts install, health-check registration, uninstall
 
-sealed-secrets/                    # V4 — encrypted secrets for GitOps commit
-├── install/README.md              # controller install, sealing workflow, key backup/rotation
-└── alertmanager-slack-webhook.sealed.yaml  # the only committed secret in this repo — safe to commit, encrypted
+sealed-secrets/                    # V4 — Sealed Secrets workflow
+└── install/README.md              # controller install, sealing workflow, key backup/rotation
 
 docs/
 ├── gitops-architecture.md         # V4 — components, sync waves, disclosed limitations
@@ -556,7 +555,7 @@ Builds on V3 without touching V1/V2/V3 or any application code — same minikube
 
 - **ArgoCD** (`argocd/`) — `AppProject` restricting Applications to this repo and to the three environment namespaces; a single `ApplicationSet` (list generator + `templatePatch`) generating one Application per environment.
 - **Environment overlays** (`helm-chart/values-{dev,staging,prod}.yaml`) — layered on top of `helm-chart/values.yaml`, same pattern as `values-aws-production.yaml`: different replica counts, resource-driven autoscaling, and canary pause durations per environment, not duplicated full copies.
-- **Sealed Secrets** (`sealed-secrets/`) — encrypts the one real secret in this repo (the alertmanager Slack webhook from V3) so it's safe to commit; plaintext and the controller's private key are never committed.
+- **Sealed Secrets** (`sealed-secrets/`) — controller install and documented workflow for encrypting the V3 Alertmanager Slack webhook. No real webhook or generated SealedSecret is committed.
 - **Argo Rollouts** (`helm-chart/templates/frontend-rollout.yaml`) — canary strategy for `frontend` only, `10% → 50% → 100%`, gated by `frontend.rollouts.enabled` (on in all three env overlays, off by default so other overlays like `values-aws-production.yaml` are unaffected).
 - **GitOps CI** (`.github/workflows/gitops-image-bump.yaml`) — builds the changed service, Trivy-scans it (blocks on CRITICAL/HIGH), pushes to ECR, opens a PR bumping `values-dev.yaml`'s image tag. No `kubectl`/`helm apply` in CI — ArgoCD does the actual deploy after merge.
 
@@ -618,7 +617,11 @@ Full component breakdown, sync-wave scheme, and disclosed limitations: **see `do
 
 ### Verified end-to-end on minikube
 
-*(filled in from the live verification run against this repo's own minikube cluster — see `docs/gitops-architecture.md` for exact commands and `docs/rollback.md` for the drift/bad-image/canary sequence actually executed)*
+- Helm lint and rendering pass for dev, staging, and prod overlays.
+- ArgoCD, Argo Rollouts, and Sealed Secrets controllers were installed and running; the ApplicationSet generated all three Applications at revision `4be0bce2`.
+- Dev automated sync was retried after fixing AppProject permission for ArgoCD's `CreateNamespace=true` operation.
+- Final workload health, drift self-heal, canary progression, and Git rollback verification remain pending: Docker Desktop stopped the existing Minikube API during verification and could not restart the container cleanly. No cluster was deleted.
+- Staging/prod remain manual by design. ECR-to-local-Mininkube delivery and a real Slack SealedSecret remain unverified; see `docs/gitops-architecture.md`.
 
 ### Why one cluster, three namespaces
 

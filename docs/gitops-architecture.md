@@ -43,7 +43,7 @@ picking minikube over a second EKS cluster.
 |---|---|---|
 | ArgoCD | GitOps controller, ApplicationSet, sync waves, health checks | `argocd/install/README.md` |
 | Argo Rollouts | Canary controller for `frontend` | referenced in `argocd/install/README.md` |
-| Sealed Secrets | Encrypts the one real secret this repo has (alertmanager Slack webhook) | `sealed-secrets/install/README.md` |
+| Sealed Secrets | Controller and workflow for encrypting the Alertmanager Slack webhook; no real sealed payload is committed | `sealed-secrets/install/README.md` |
 | Helm chart env overlays | Per-namespace replica/resource/autoscaling config | `helm-chart/values-{dev,staging,prod}.yaml` |
 
 ## Namespaces
@@ -57,7 +57,7 @@ picking minikube over a second EKS cluster.
 Restricts every generated Application to:
 - **One source repo**: this GitHub repo, nothing else.
 - **Three destinations**: the cluster-local API server, scoped to exactly the three namespaces above (not a wildcard).
-- **A fixed resource whitelist**: core workload kinds + `argoproj.io/Rollout` + `bitnami.com/SealedSecret`. No cluster-scoped resources -- ArgoCD, Argo Rollouts, and Sealed Secrets themselves are installed as cluster infra outside this project (bootstrapping: something has to exist before ArgoCD can manage anything).
+- **A fixed resource whitelist**: core workload kinds + `argoproj.io/Rollout` + `bitnami.com/SealedSecret`. Core `Namespace` is the only cluster-scoped permission, required by `CreateNamespace=true`. ArgoCD, Argo Rollouts, and Sealed Secrets remain bootstrap infrastructure outside this project.
 
 ## ApplicationSet (`argocd/applicationset.yaml`)
 
@@ -100,6 +100,15 @@ prod, shortest in dev).
 
 ## Limitations (disclosed, not hidden — same discipline as V3)
 
+- **Live verification is incomplete.** Helm lint/rendering passed and the three
+  Applications were generated at revision `4be0bce2`. Dev sync was retried
+  after fixing Namespace permission. Docker Desktop then stopped serving the
+  existing Minikube API and could not restart its container cleanly, so final
+  workload health, drift correction, canary progression, and Git rollback are
+  not claimed. The cluster was not deleted.
+- **No real SealedSecret is committed or decrypted end-to-end.** The controller
+  and sealing procedure are present, but no real Slack webhook was supplied.
+
 - **No service mesh or ingress controller installed** on this minikube target,
   so the canary uses Rollouts' basic strategy without `trafficRouting`: weight
   is approximated by replica count against the existing frontend `Service`,
@@ -116,7 +125,8 @@ prod, shortest in dev).
   natural next step, not done in this pass.
 - **The GitOps CI workflow (`gitops-image-bump.yaml`) builds/pushes to ECR**
   (reusing the existing AWS OIDC role from V1), because that's the only image
-  registry this repo has infra for. The live verification actually run
-  against this repo's minikube target instead used `eval $(minikube
-  docker-env) && docker build` to load images directly into minikube's local
-  Docker daemon, bypassing ECR -- wiring minikube to pull from ECR (imagePullSecrets) is future work.
+  registry this repo has infra for. Local Minikube ECR pull authentication is
+  not configured, so this delivery path was not verified end-to-end here.
+  Also, the current workflow bumps a chart-wide tag after building only changed
+  services; it needs per-service image overrides (or must build every service
+  at the shared tag) before production use.
