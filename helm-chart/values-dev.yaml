@@ -29,7 +29,7 @@
 frontend:
   replicaCount: 1
   podAnnotations:
-    demo.thinkwithops.io/revision: "canary-complete"
+    demo.thinkwithops.io/revision: "canary-abort"
   # Local GitOps namespaces have no cloud LoadBalancer controller. Keep the
   # internal frontend Service only; use port-forward for access.
   externalService: false
