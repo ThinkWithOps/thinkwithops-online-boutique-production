@@ -28,6 +28,7 @@
 # rehearsal of prod's canary/rollback behavior without prod's blast radius.
 
 frontend:
+  externalService: false
   replicaCount: 2
   autoscaling:
     enabled: true

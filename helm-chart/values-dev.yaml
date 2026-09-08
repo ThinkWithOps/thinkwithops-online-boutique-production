@@ -28,6 +28,9 @@
 
 frontend:
   replicaCount: 1
+  # Local GitOps namespaces have no cloud LoadBalancer controller. Keep the
+  # internal frontend Service only; use port-forward for access.
+  externalService: false
   rollouts:
     enabled: true
     steps:
