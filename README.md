@@ -66,7 +66,7 @@ Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR
 | V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | [Watch](https://youtu.be/qjnJab8mqcI) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
 | V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | [Watch](https://youtu.be/mjGCdLFqZ7k) | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
 | V3 | [`v3.0-sre-observability`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v3.0-sre-observability) | Coming soon | Loki/Promtail logging, Tempo tracing, Prometheus alert rules, Alertmanager + Slack, runbooks, incident debug scripts — local minikube |
-| V4 | [`v4.0-gitops-argocd`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v4.0-gitops-argocd) | Coming soon | ArgoCD ApplicationSet across 3 namespaces, Sealed Secrets, Argo Rollouts canary, GitOps CI, drift/rollback proof — same local minikube |
+| V4 | [`v4.0-gitops-argocd`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/tree/v4.0-gitops-argocd) | Coming soon | ArgoCD ApplicationSet across 3 namespaces, Sealed Secrets pattern, Argo Rollouts canary, GitOps CI, drift/rollback proof — local minikube v1.30 profile |
 
 ---
 
@@ -551,7 +551,7 @@ V2 proved autoscaling works under load, live in a terminal. It didn't answer: wh
 
 ## V4 — GitOps with ArgoCD
 
-Builds on V3 without touching V1/V2/V3 or any application code — same minikube cluster, three namespaces simulating environments instead of one. Tag: `v4.0-gitops-argocd`.
+Builds on V3 without touching V1/V2/V3 or any application code. Verification used a separate Kubernetes v1.30 Minikube profile named `v4-gitops`, preserving the original profile, with three namespaces simulating environments. Tag: `v4.0-gitops-argocd`.
 
 - **ArgoCD** (`argocd/`) — `AppProject` restricting Applications to this repo and to the three environment namespaces; a single `ApplicationSet` (list generator + `templatePatch`) generating one Application per environment.
 - **Environment overlays** (`helm-chart/values-{dev,staging,prod}.yaml`) — layered on top of `helm-chart/values.yaml`, same pattern as `values-aws-production.yaml`: different replica counts, resource-driven autoscaling, and canary pause durations per environment, not duplicated full copies.
@@ -564,7 +564,7 @@ Builds on V3 without touching V1/V2/V3 or any application code — same minikube
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 45}, "themeVariables": {"fontSize": "14px"}}}%%
 flowchart TB
-    GIT[("Git repo\nmain branch")]:::git
+    GIT[("Git repo\nv4-gitops-argocd branch")]:::git
     CI["GitHub Actions\nbuild + Trivy scan + PR"]:::ci
 
     ARGOCD["ArgoCD\nApplicationSet"]:::gitops
@@ -615,7 +615,7 @@ flowchart TB
 
 Full component breakdown, sync-wave scheme, and disclosed limitations: **see `docs/gitops-architecture.md`**. Promotion flow: **see `docs/environment-promotion.md`**. Abort/rollback procedures: **see `docs/rollback.md`**.
 
-### Verified end-to-end on minikube
+### Verified locally on minikube
 
 - Helm lint and rendering pass for dev, staging, and prod overlays.
 - Kubernetes v1.30.0 served `/openapi/v2`; ArgoCD v2.13.2 generated dev/staging/prod Applications without the v1.35 schema-diff failure.
@@ -623,7 +623,14 @@ Full component breakdown, sync-wave scheme, and disclosed limitations: **see `do
 - Scaling dev `adservice` from 1 to 5 produced `OutOfSync/Progressing`; self-heal restored 1 replica and `Synced/Healthy`.
 - A real bad frontend image revision produced `Degraded`; Git revert `f0e6a50f` recovered `Synced/Healthy`.
 - Canary output captured configured 10%, 50%, and 100% steps. A second canary was aborted (`Degraded`) then undone (`Healthy`, 100%).
-- Prometheus, Loki, Tempo, Grafana, and Alertmanager were installed separately from ArgoCD. ECR-to-local-Minikube delivery remains unverified; see `docs/gitops-architecture.md`.
+- Prometheus, Loki, Tempo, Grafana, and Alertmanager stayed `Running` with zero restarts during a repeated drift/self-heal test. In-cluster HTTP readiness checks passed for all five services.
+
+### V4 limitations
+
+- Staging and prod were generated and detected Git state, but intentionally remained unsynced because promotion is manual. Their full workloads were not deployed in this local verification.
+- Sealed Secrets controller readiness was verified, but V4 has no real application secret to seal; no example ciphertext is presented as production proof.
+- CI does not run `kubectl` or Helm deployment commands. The ECR delivery path was not exercised against local Minikube because pull authentication is not configured.
+- The current image-bump workflow builds changed services but updates a chart-wide tag. Before production use, change it to per-service repository/tag overrides or build every service under the shared tag.
 
 ### Why one cluster, three namespaces
 
@@ -672,6 +679,10 @@ V3 proved the app is observable — you can see what's wrong. It didn't answer h
 
 ## Challenges
 
+- **Kubernetes v1.35.1 omitted `/openapi/v2`, blocking ArgoCD v2.13.2 comparison.** All generated Applications initially showed `Unknown`. A separate `v4-gitops` profile pinned to Kubernetes v1.30.0 served the endpoint and allowed normal reconciliation; the original profile was preserved.
+- **`CreateNamespace=true` requires cluster-scoped Namespace permission.** The first AppProject whitelist rejected namespace creation. Restricting `clusterResourceWhitelist` to core `Namespace` fixed bootstrap without granting broad cluster access.
+- **A local LoadBalancer Service blocked sync-wave completion.** V4 overlays inherited `frontend.externalService: true`, but Minikube had no cloud load-balancer controller. Setting it to `false` in dev/staging/prod kept the internal frontend Service and allowed ArgoCD to continue.
+- **Argo Rollouts must be installed in `argo-rollouts`.** Applying its manifest without `-n argo-rollouts` placed the controller in `default`, while its ClusterRoleBinding targeted the expected namespace. Reinstalling namespaced resources correctly fixed the `cannot get resource "configmaps"` crash.
 - **Corporate/local AV HTTPS scanning broke Terraform.** AVG's Web Shield intercepted loopback TLS between Terraform core and its provider plugin (`x509: certificate signed by unknown authority` on a *local* gRPC handshake). Fixed by temporarily disabling HTTPS scanning during `plan`/`apply`.
 - **AVG Web Shield also broke `kubectl` against minikube (V3).** The API server was healthy, but HTTPS scanning intercepted `https://127.0.0.1:<port>` and replaced minikube's certificate, so even `kubectl get pods` failed with `x509: certificate signed by unknown authority`. Disabling Web Shield made the same command succeed immediately. Verify with `kubectl get pods -n online-boutique` and `kubectl auth can-i get pods -n online-boutique` before attempting cluster repair; do not delete a healthy cluster. Add an AVG exception for `kubectl`/loopback HTTPS for the durable fix.
 - **AWS CLI/Terraform SSL errors from corp network TLS interception.** `SSL_CERT_FILE`/`AWS_CA_BUNDLE` pointed at a PEM built from the Windows trusted-root cert store resolved it.
