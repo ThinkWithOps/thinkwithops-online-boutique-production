@@ -133,6 +133,7 @@ emailService:
 frontend:
   create: true
   name: frontend
+  podAnnotations: {}
   image:
     # Optional per-service override used by GitOps promotion/rollback. Empty
     # values inherit the chart-wide repository/tag above.
