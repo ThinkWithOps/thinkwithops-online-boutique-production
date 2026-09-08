@@ -31,8 +31,6 @@ frontend:
   # Local GitOps namespaces have no cloud LoadBalancer controller. Keep the
   # internal frontend Service only; use port-forward for access.
   externalService: false
-  image:
-    tag: "v0.0.0-does-not-exist"
   rollouts:
     enabled: true
     steps:
