@@ -43,7 +43,7 @@ picking minikube over a second EKS cluster.
 |---|---|---|
 | ArgoCD | GitOps controller, ApplicationSet, sync waves, health checks | `argocd/install/README.md` |
 | Argo Rollouts | Canary controller for `frontend` | referenced in `argocd/install/README.md` |
-| Sealed Secrets | Controller and workflow for encrypting the Alertmanager Slack webhook; no real sealed payload is committed | `sealed-secrets/install/README.md` |
+| Sealed Secrets | Controller plus generic workflow for future application secrets; no real payload is required or committed | `sealed-secrets/install/README.md` |
 | Helm chart env overlays | Per-namespace replica/resource/autoscaling config | `helm-chart/values-{dev,staging,prod}.yaml` |
 
 ## Namespaces
@@ -98,16 +98,51 @@ Steps: `setWeight: 10` → pause → `setWeight: 50` → pause → `setWeight: 1
 configured per environment (`values-dev/staging/prod.yaml` — longest pauses in
 prod, shortest in dev).
 
+## Verified execution (2026-09-08)
+
+The original Kubernetes v1.35.1 profile did not serve `/openapi/v2`. A fresh,
+separate profile preserved the old cluster and resolved the ArgoCD schema-diff
+blocker:
+
+```text
+$ minikube start -p v4-gitops --driver=docker --kubernetes-version=v1.30.0 --cpus=6 --memory=6500
+$ kubectl get nodes
+NAME        STATUS   ROLES           VERSION
+v4-gitops   Ready    control-plane   v1.30.0
+$ kubectl get --raw=/openapi/v2
+{"swagger":"2.0","info":{"title":"Kubernetes","version":"v1.30.0"},...}
+```
+
+ArgoCD v2.13.2, Argo Rollouts v1.8.3, and Sealed Secrets v0.27.1 were installed.
+After correcting Rollouts' namespace and disabling the unavailable local
+LoadBalancer Service in V4 overlays, dev completed automated reconciliation:
+
+```text
+NAME                  SYNC STATUS   HEALTH STATUS   REVISION
+online-boutique-dev   Synced        Healthy         1d3c10b6...
+
+NAME           DESIRED   READY
+adservice      5         1
+SYNC        HEALTH
+OutOfSync   Progressing
+
+NAME           DESIRED   READY
+adservice      1         1
+SYNC     HEALTH    PHASE
+Synced   Healthy   Succeeded
+```
+
+The 5→1 result is live proof of dev `selfHeal`. Staging/prod remained
+`OutOfSync/Missing`, proving their manual-sync policy did not auto-deploy them.
+Bad-image, Git-revert, canary, and abort/undo evidence is in
+[`rollback.md`](rollback.md).
+
 ## Limitations (disclosed, not hidden — same discipline as V3)
 
-- **Live verification is incomplete.** Helm lint/rendering passed and the three
-  Applications were generated at revision `4be0bce2`. Dev sync was retried
-  after fixing Namespace permission. Docker Desktop then stopped serving the
-  existing Minikube API and could not restart its container cleanly, so final
-  workload health, drift correction, canary progression, and Git rollback are
-  not claimed. The cluster was not deleted.
-- **No real SealedSecret is committed or decrypted end-to-end.** The controller
-  and sealing procedure are present, but no real Slack webhook was supplied.
+- **No real SealedSecret is committed or decrypted end-to-end.** V4 uses no
+  Slack integration and has no real application secret to seal. The controller
+  reached Ready and the generic workflow is documented; inventing a fake
+  production secret would not prove useful secret delivery.
 
 - **No service mesh or ingress controller installed** on this minikube target,
   so the canary uses Rollouts' basic strategy without `trafficRouting`: weight

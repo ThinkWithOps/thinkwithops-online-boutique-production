@@ -38,19 +38,24 @@ argocd app get online-boutique-dev
 
 ## Rollout health check for the frontend canary
 
-ArgoCD's built-in resource health checks do not know about `argoproj.io/Rollout`
-out of the box. Register Argo Rollouts' Lua health check via the shared
-`argocd-cm` ConfigMap (needed for the ArgoCD UI to show `Progressing` /
-`Healthy` / `Degraded` correctly during a canary, and for sync waves to gate on
-Rollout health):
+Install Argo Rollouts in the namespace expected by its ClusterRoleBinding:
 
 ```bash
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/manifests/argocd/argocd-application-health-config.yaml
+kubectl create namespace argo-rollouts
+kubectl apply -n argo-rollouts \
+  -f https://github.com/argoproj/argo-rollouts/releases/download/v1.8.3/install.yaml
+kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=180s
 ```
 
-That manifest patches `argocd-cm` with `resource.customizations.health.argoproj.io_Rollout` --
-it's argo-rollouts' own published health-check Lua script, not something
-authored in this repo.
+Do not apply this manifest without `-n argo-rollouts`: namespaced resources
+otherwise land in `default`, while the bundled ClusterRoleBinding still points
+at `system:serviceaccount:argo-rollouts:argo-rollouts`. The controller then
+fails with `cannot get resource "configmaps"`.
+
+ArgoCD v2.13.2 correctly reported the Rollout as Progressing, Degraded after
+an abort, and Healthy after undo during the verified run; no external Lua
+health-config URL is required. The previously documented upstream `master`
+URL returned HTTP 404 and was removed.
 
 ## Uninstall / reset
 

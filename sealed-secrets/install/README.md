@@ -4,8 +4,6 @@ Bitnami Sealed Secrets controller. Cluster-scoped infra, installed once,
 outside any GitOps Application (same bootstrapping reasoning as ArgoCD).
 
 ```bash
-kubectl create namespace sealed-secrets
-
 kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/controller.yaml
 
 kubectl -n kube-system rollout status deploy/sealed-secrets-controller --timeout=120s
@@ -23,30 +21,27 @@ Install the `kubeseal` CLI (matches the controller version above):
 kubeseal --version
 ```
 
-## Sealing the alertmanager Slack webhook (the one real secret in this repo)
+## Sealing a future application secret
 
-This repo's only plaintext secret example is
-`observability/alertmanager/slack-webhook-secret.example.yaml` (V3). For V4 the
-GitOps-committed path replaces "apply this file with real values by hand" with
-"commit a SealedSecret that only this cluster's controller can decrypt":
+V4 does not currently use Slack or contain another real application secret,
+so no generated SealedSecret is committed. When a real secret is introduced,
+use this generic workflow:
 
 ```bash
-# 1. Create the REAL secret locally -- never commit this file. Key name
-#    (webhook-url) must match what observability/alertmanager/values.yaml
-#    expects the mounted secret to contain.
-kubectl create secret generic alertmanager-slack-webhook \
-  --namespace monitoring \
-  --from-literal=webhook-url='https://hooks.slack.com/services/REAL/WEBHOOK/URL' \
-  --dry-run=client -o yaml > /tmp/alertmanager-slack-webhook.plain.yaml
+# 1. Create the real Secret locally. Never commit this file.
+kubectl create secret generic example-secret \
+  --namespace online-boutique-dev \
+  --from-literal=example-key='REAL_VALUE' \
+  --dry-run=client -o yaml > /tmp/example-secret.plain.yaml
 
 # 2. Seal it against the cluster's current public cert.
 kubeseal --format=yaml \
   --cert sealed-secrets/pub-cert.pem \
-  < /tmp/alertmanager-slack-webhook.plain.yaml \
-  > sealed-secrets/alertmanager-slack-webhook.sealed.yaml
+  < /tmp/example-secret.plain.yaml \
+  > sealed-secrets/example-secret.sealed.yaml
 
 # 3. Delete the plaintext copy immediately.
-rm /tmp/alertmanager-slack-webhook.plain.yaml
+rm /tmp/example-secret.plain.yaml
 
 # 4. Commit only the .sealed.yaml file.
 ```

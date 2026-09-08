@@ -174,7 +174,7 @@ flowchart TB
 | Minikube (V3 target) | Local single-node cluster — no AWS/cloud dependency for this layer |
 | ArgoCD + ApplicationSet (V4) | GitOps controller, one AppProject + ApplicationSet generating dev/staging/prod Applications |
 | Argo Rollouts (V4) | Canary strategy for `frontend`, replica-weighted (no service mesh installed) |
-| Sealed Secrets (V4) | Controller plus workflow for sealing the Alertmanager Slack webhook; no real payload is committed |
+| Sealed Secrets (V4) | Controller plus generic workflow for future secrets; no real payload is required or committed |
 | Trivy (V4) | Container image vulnerability scan, blocks CI on CRITICAL/HIGH |
 
 ---
@@ -555,7 +555,7 @@ Builds on V3 without touching V1/V2/V3 or any application code — same minikube
 
 - **ArgoCD** (`argocd/`) — `AppProject` restricting Applications to this repo and to the three environment namespaces; a single `ApplicationSet` (list generator + `templatePatch`) generating one Application per environment.
 - **Environment overlays** (`helm-chart/values-{dev,staging,prod}.yaml`) — layered on top of `helm-chart/values.yaml`, same pattern as `values-aws-production.yaml`: different replica counts, resource-driven autoscaling, and canary pause durations per environment, not duplicated full copies.
-- **Sealed Secrets** (`sealed-secrets/`) — controller install and documented workflow for encrypting the V3 Alertmanager Slack webhook. No real webhook or generated SealedSecret is committed.
+- **Sealed Secrets** (`sealed-secrets/`) — controller install and generic sealing workflow. V4 uses no Slack integration and has no real application secret requiring a SealedSecret.
 - **Argo Rollouts** (`helm-chart/templates/frontend-rollout.yaml`) — canary strategy for `frontend` only, `10% → 50% → 100%`, gated by `frontend.rollouts.enabled` (on in all three env overlays, off by default so other overlays like `values-aws-production.yaml` are unaffected).
 - **GitOps CI** (`.github/workflows/gitops-image-bump.yaml`) — builds the changed service, Trivy-scans it (blocks on CRITICAL/HIGH), pushes to ECR, opens a PR bumping `values-dev.yaml`'s image tag. No `kubectl`/`helm apply` in CI — ArgoCD does the actual deploy after merge.
 
@@ -618,10 +618,12 @@ Full component breakdown, sync-wave scheme, and disclosed limitations: **see `do
 ### Verified end-to-end on minikube
 
 - Helm lint and rendering pass for dev, staging, and prod overlays.
-- ArgoCD, Argo Rollouts, and Sealed Secrets controllers were installed and running; the ApplicationSet generated all three Applications at revision `4be0bce2`.
-- Dev automated sync was retried after fixing AppProject permission for ArgoCD's `CreateNamespace=true` operation.
-- Final workload health, drift self-heal, canary progression, and Git rollback verification remain pending: Docker Desktop stopped the existing Minikube API during verification and could not restart the container cleanly. No cluster was deleted.
-- Staging/prod remain manual by design. ECR-to-local-Mininkube delivery and a real Slack SealedSecret remain unverified; see `docs/gitops-architecture.md`.
+- Kubernetes v1.30.0 served `/openapi/v2`; ArgoCD v2.13.2 generated dev/staging/prod Applications without the v1.35 schema-diff failure.
+- Dev reached `Synced/Healthy`; all 12 dev workload pods were `Running`, ready, and at zero restarts. Staging/prod remained `OutOfSync/Missing`, confirming manual promotion.
+- Scaling dev `adservice` from 1 to 5 produced `OutOfSync/Progressing`; self-heal restored 1 replica and `Synced/Healthy`.
+- A real bad frontend image revision produced `Degraded`; Git revert `f0e6a50f` recovered `Synced/Healthy`.
+- Canary output captured configured 10%, 50%, and 100% steps. A second canary was aborted (`Degraded`) then undone (`Healthy`, 100%).
+- Prometheus, Loki, Tempo, Grafana, and Alertmanager were installed separately from ArgoCD. ECR-to-local-Minikube delivery remains unverified; see `docs/gitops-architecture.md`.
 
 ### Why one cluster, three namespaces
 
@@ -767,7 +769,7 @@ Every command used across this project's setup, deploy, verification, and teardo
 | Command | Purpose |
 |---|---|
 | `minikube start --cpus=4 --memory=7500` | Start the local cluster for V3 (lower `--memory` if Docker Desktop rejects 8192 — see Challenges) |
-| `minikube stop && minikube start --cpus=6 --memory=6500` | Resize for V4 — ArgoCD + Argo Rollouts + Sealed Secrets on top of V3 needs more than V3 alone; cap `--memory` to what `docker info` shows Docker Desktop actually has, not more (see `docs/gitops-architecture.md`) |
+| `minikube start -p v4-gitops --driver=docker --kubernetes-version=v1.30.0 --cpus=6 --memory=6500` | Start verified V4 profile. Kubernetes v1.30 serves `/openapi/v2`, required by the pinned ArgoCD v2.13.2 diff path; see `docs/gitops-architecture.md` |
 | `kubectl create namespace online-boutique --dry-run=client -o yaml \| kubectl apply -f -` | Create the app namespace |
 | `helm install online-boutique helm-chart/ --namespace online-boutique` | Deploy the app using its default public-image values — no AWS overlay needed |
 | `minikube service frontend-external -n online-boutique` | Open the storefront in a browser (minikube has no cloud LoadBalancer) |
@@ -847,7 +849,7 @@ Every command used across this project's setup, deploy, verification, and teardo
 | `kubectl get applications -n argocd` | List all generated Applications and their Sync/Health status |
 | `argocd app get online-boutique-dev` | Full status for one Application |
 | `argocd app sync online-boutique-staging` | Manually sync staging (or `-prod`) — dev syncs automatically, staging/prod never do |
-| `kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-rollouts/master/manifests/argocd/argocd-application-health-config.yaml` | Register the Argo Rollouts health check so ArgoCD understands canary state |
+| `kubectl create namespace argo-rollouts && kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/download/v1.8.3/install.yaml` | Install the pinned Rollouts controller in the namespace targeted by its RBAC binding |
 | `kubectl argo rollouts get rollout frontend -n online-boutique-dev --watch` | Watch the frontend canary step through 10% → 50% → 100% |
 | `kubectl argo rollouts abort frontend -n <ns>` then `kubectl argo rollouts undo frontend -n <ns>` | Abort a bad canary and roll it back |
 | `kubectl scale deployment/adservice -n online-boutique-dev --replicas=5` | Manually drift a resource, to prove dev's `selfHeal` reverts it |

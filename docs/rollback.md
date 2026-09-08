@@ -24,9 +24,20 @@ git push
   argocd app sync online-boutique-staging   # or -prod
   ```
 
-Expected before/after: `argocd app get` shows `Degraded` (pods
-`ImagePullBackOff`/`CrashLoopBackOff` from the bad tag) → after the revert
-syncs → `Synced` / `Healthy`.
+Verified on dev with a frontend-only image override. Commit `14151c9a` set the
+tag to `v0.0.0-does-not-exist`; ArgoCD reported a real degraded rollout while
+the stable pod remained available. Revert `f0e6a50f` restored source of truth:
+
+```text
+REVISION      SYNC        HEALTH     PHASE
+14151c9a...   OutOfSync   Degraded   Running
+
+$ git revert 14151c9a
+[v4-gitops-argocd f0e6a50f] Revert "test(gitops): deploy invalid frontend image"
+
+NAME                  SYNC STATUS   HEALTH STATUS   REVISION
+online-boutique-dev   Synced        Healthy         f0e6a50f...
+```
 
 ## Path 2 -- Abort/rollback a canary in progress (frontend only)
 
@@ -48,6 +59,33 @@ kubectl argo rollouts get rollout frontend -n <ns>
 `Rollout`'s desired state back to the prior stable revision so the next sync
 doesn't just re-attempt the same bad promotion. Run both.
 
+Verified output from revision 5:
+
+```text
+Status:          Progressing
+Step:            0/5
+SetWeight:       10
+Replicas:        Current: 2, Ready: 1, Available: 1
+
+$ kubectl argo rollouts abort frontend -n online-boutique-dev
+rollout 'frontend' aborted
+Status:          Degraded
+Message:         RolloutAborted: Rollout aborted update to revision 5
+Replicas:        Current: 1, Ready: 1, Available: 1
+
+$ kubectl argo rollouts undo frontend -n online-boutique-dev
+rollout 'frontend' undo
+Status:          Healthy
+Step:            5/5
+SetWeight:       100
+ActualWeight:    100
+```
+
+A separate successful run captured `Step 0/5, SetWeight 10`, `Step 3/5,
+SetWeight 50`, then `Step 5/5, SetWeight 100, Status Healthy`. Because dev has
+one desired replica and no traffic router, the 10% stage temporarily had one
+stable plus one canary pod—an actual 50/50 approximation, not exact 10%.
+
 ## Which path for which failure
 
 | Symptom | Path |
@@ -67,4 +105,15 @@ recovery, not just `kubectl`/`argocd` status:
 kubectl -n monitoring port-forward svc/grafana 3000:80
 # browse http://127.0.0.1:3000 -- request rate/error rate/latency panels
 # should show the dip-and-recover shape across a bad-deploy-then-rollback cycle
+```
+
+The stack was rechecked during a live 1→5→1 drift/self-heal cycle. Every
+monitoring pod stayed `Running` with zero restarts. In-cluster HTTP checks after
+reconciliation returned:
+
+```text
+Grafana:    {"database":"ok","version":"12.3.1",...}
+Prometheus: Prometheus Server is Ready.
+Loki:       ready
+Tempo:      ready
 ```
