@@ -133,6 +133,11 @@ emailService:
 frontend:
   create: true
   name: frontend
+  image:
+    # Optional per-service override used by GitOps promotion/rollback. Empty
+    # values inherit the chart-wide repository/tag above.
+    repository: ""
+    tag: ""
   externalService: true
   cymbalBranding: false
   # One of: local, gcp, aws, azure, onprem, alibaba. When not set, defaults to "local" unless running in GKE, otherwise auto-sets to gcp.
@@ -145,6 +150,7 @@ frontend:
   # keep working unchanged.
   rollouts:
     enabled: false
+    progressDeadlineSeconds: 60
     steps:
       - setWeight: 10
         pauseSeconds: 30

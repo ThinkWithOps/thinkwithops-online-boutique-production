@@ -33,6 +33,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
 spec:
   replicas: {{ .Values.frontend.replicaCount | default 1 }}
+  progressDeadlineSeconds: {{ .Values.frontend.rollouts.progressDeadlineSeconds | default 60 }}
   selector:
     matchLabels:
       app: {{ .Values.frontend.name }}
@@ -80,7 +81,7 @@ spec:
                 - ALL
             privileged: false
             readOnlyRootFilesystem: true
-          image: {{ .Values.images.repository }}/{{ .Values.frontend.name }}:{{ .Values.images.tag | default .Chart.AppVersion }}
+          image: {{ .Values.frontend.image.repository | default .Values.images.repository }}/{{ .Values.frontend.name }}:{{ .Values.frontend.image.tag | default .Values.images.tag | default .Chart.AppVersion }}
           ports:
           - containerPort: 8080
           readinessProbe:
