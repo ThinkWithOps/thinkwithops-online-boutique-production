@@ -564,7 +564,7 @@ Builds on V3 without touching V1/V2/V3 or any application code. Verification use
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 45}, "themeVariables": {"fontSize": "14px"}}}%%
 flowchart TB
-    GIT[("Git repo\nv4-gitops-argocd branch")]:::git
+    GIT[("Git repo\nv4-gitops-argocd revision")]:::git
     CI["GitHub Actions\nbuild + Trivy scan + PR"]:::ci
 
     ARGOCD["ArgoCD\nApplicationSet"]:::gitops
@@ -614,6 +614,94 @@ flowchart TB
 **Staging/prod (tan/red, dashed sync arrows):** ArgoCD detects changes but does not apply them — `argocd app sync` is a deliberate, manual action, see `docs/environment-promotion.md`.
 
 Full component breakdown, sync-wave scheme, and disclosed limitations: **see `docs/gitops-architecture.md`**. Promotion flow: **see `docs/environment-promotion.md`**. Abort/rollback procedures: **see `docs/rollback.md`**.
+
+### Open ArgoCD and the storefront locally (V4)
+
+Start Docker Desktop first. `v4-gitops` is the dedicated **Minikube cluster profile**, not a Git branch or application namespace. Resume the existing cluster without reinstalling ArgoCD:
+
+```bash
+minikube start -p v4-gitops
+minikube status -p v4-gitops
+kubectl config use-context v4-gitops
+kubectl config current-context
+kubectl cluster-info
+kubectl get nodes
+kubectl -n argocd get pods
+kubectl -n argocd get applications
+kubectl -n online-boutique-dev get pods
+```
+
+For a **first installation only**, use the pinned profile command and controller bootstrap commands in the [V4 command reference](#v4-command-reference), following [the installation guide](argocd/install/README.md). Install Argo Rollouts before applying the ApplicationSet because the V4 frontend uses a `Rollout` resource.
+
+If your installed `kubectl` reports a version-skew warning, use the profile's matching client, for example `minikube -p v4-gitops kubectl -- get pods -n argocd`.
+
+#### ArgoCD dashboard and login
+
+Keep this command running in its own terminal:
+
+```bash
+kubectl -n argocd port-forward svc/argocd-server 8080:443
+```
+
+Open **https://127.0.0.1:8080**. A browser certificate warning is expected for this local ArgoCD endpoint; proceed only after confirming this is your own forwarded endpoint. Username: **`admin`**.
+
+Retrieve the initial password in a second terminal (Git Bash / Bash):
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" | base64 -d
+```
+
+PowerShell equivalent:
+
+```powershell
+$argoPasswordBase64 = kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}"
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($argoPasswordBase64))
+```
+
+This is the **initial** password; if it was changed, use the current password. A missing initial-admin Secret does not mean ArgoCD must be reinstalled. Never record, screenshot, or commit the password. Log in before screen recording.
+
+Click **`online-boutique-dev`** to inspect its resource tree, health, events, and manifests. ArgoCD shows deployment state; the shopping website is a separate URL below. The verified dev state was `Synced / Healthy`; it may briefly be `Progressing` after startup. Staging/prod intentionally remain `OutOfSync / Missing` until manually deployed.
+
+Optional CLI login (requires the `argocd` CLI; enter the password at its prompt):
+
+```bash
+argocd login 127.0.0.1:8080 --username admin --insecure
+argocd app get online-boutique-dev
+```
+
+Here `--insecure` is limited to the local ArgoCD CLI connection with its self-signed certificate; it is not a fix for Kubernetes API certificate failures.
+
+#### Online Boutique shopping website
+
+Use another terminal and **port 8081**, leaving port 8080 for ArgoCD:
+
+```bash
+kubectl -n online-boutique-dev get service frontend
+kubectl -n online-boutique-dev get pods -l app=frontend
+kubectl -n online-boutique-dev port-forward service/frontend 8081:80
+```
+
+Open **http://127.0.0.1:8081**. This is the V4 storefront in `online-boutique-dev`, not V3's `online-boutique` namespace. The Service exposes port 80 and forwards to the frontend container on 8080. Keep both port-forward terminals open; `Ctrl+C` ends that local connection. If a forwarded pod is replaced, rerun its port-forward.
+
+| Website | Local URL | Forward |
+|---|---|---|
+| ArgoCD | `https://127.0.0.1:8080` | `svc/argocd-server 8080:443` in `argocd` |
+| Online Boutique | `http://127.0.0.1:8081` | `svc/frontend 8081:80` in `online-boutique-dev` |
+| Grafana (if monitoring is installed) | `http://127.0.0.1:3000` | `svc/grafana 3000:80` in `monitoring` |
+
+**Local access troubleshooting:**
+
+- `Unable to listen on port` / `Only one usage of each socket address`: another local process owns that port. Use another local port, e.g. `8082:80` for the storefront, then browse port 8082.
+- API connection refused after a Docker restart: check `minikube status -p v4-gitops`, resume the profile, and verify the context. If the running profile's endpoint changed, run `minikube update-context -p v4-gitops`.
+- `x509: certificate signed by unknown authority`: check the endpoint and local HTTPS interception, including the previously observed AVG Web Shield issue. Retry `kubectl cluster-info` after addressing interception; do not assume corruption or delete the cluster.
+- Website unavailable with a working API: inspect `kubectl -n online-boutique-dev get pods`, `kubectl -n online-boutique-dev get endpointslice -l kubernetes.io/service-name=frontend`, and `kubectl -n online-boutique-dev logs -l app=frontend --tail=50`.
+
+**Git revision note:** `argocd/applicationset.yaml` currently uses `targetRevision: v4-gitops-argocd`. After the V4 branch was merged and deleted, that name identifies the published tag. It is a fixed snapshot: new commits on `main` will not be picked up through that tag. For ongoing GitOps delivery, deliberately change the ApplicationSet's `spec.template.spec.source.targetRevision` to `main`, commit/push that change, and reapply `argocd/applicationset.yaml`. This README update does not change the live configuration. Inspect the generated revision with:
+
+```bash
+kubectl -n argocd get application online-boutique-dev -o jsonpath="{.spec.source.targetRevision}"
+```
 
 ### Verified locally on minikube
 
@@ -730,7 +818,7 @@ cd terraform-aws && terraform destroy
 
 ## Command Reference
 
-Every command used across this project's setup, deploy, verification, and teardown, in one place.
+Core setup, deploy, verification, access, and teardown commands. Specialized procedures are linked from each version's documentation; commands that install, sync, scale, revert, or delete resources change state and are not routine health checks.
 
 **Terraform**
 | Command | Purpose |
@@ -850,22 +938,56 @@ Every command used across this project's setup, deploy, verification, and teardo
 | `./scripts/debug/slow-response.sh <app-label>` | Investigate a service tripping the latency alert |
 | `./scripts/debug/service-unreachable.sh <service-name>` | Diagnose a Service with no reachable endpoints |
 
+<a id="v4-command-reference"></a>
+
 **ArgoCD / GitOps (V4)**
+
+For daily access, follow [the local walkthrough](#open-argocd-and-the-storefront-locally-v4). Bootstrap commands below are for first installation. CLI operations require `argocd`, the `kubectl argo rollouts` plugin, or `kubeseal` as indicated by the command. Do not deploy staging/prod simply to remove their expected `Missing` status.
+
 | Command | Purpose |
 |---|---|
+| `minikube start -p v4-gitops` | Resume the existing V4 profile after Docker Desktop starts |
+| `minikube status -p v4-gitops` | Check host, kubelet, API server, and kubeconfig |
+| `kubectl config use-context v4-gitops` | Select V4 before running commands |
+| `kubectl get --raw=/openapi/v2` | Check schema endpoint compatibility with the pinned ArgoCD version |
+| `kubectl create namespace argocd --dry-run=client -o yaml \| kubectl apply -f -` | Ensure the ArgoCD namespace exists before installing |
 | `kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.2/manifests/install.yaml` | Install ArgoCD |
+| `kubectl -n argocd rollout status deployment/argocd-server --timeout=180s` | Wait for the UI server; also inspect all ArgoCD pods |
+| `kubectl -n argocd get pods` | Check controller and server readiness |
 | `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" \| base64 --decode; echo` | Retrieve the initial ArgoCD admin password |
 | `kubectl -n argocd port-forward svc/argocd-server 8080:443` | Access the ArgoCD UI at `https://127.0.0.1:8080` |
+| `argocd login 127.0.0.1:8080 --username admin --insecure` | Local CLI login; enter the password interactively |
+| `kubectl -n online-boutique-dev port-forward svc/frontend 8081:80` | Open the V4 shopping website at `http://127.0.0.1:8081` without colliding with ArgoCD |
+| `kubectl -n online-boutique-dev get pods` | Verify V4 application workloads |
 | `kubectl apply -f argocd/project.yaml && kubectl apply -f argocd/applicationset.yaml` | Land the AppProject + ApplicationSet (generates dev/staging/prod Applications) |
 | `kubectl get applications -n argocd` | List all generated Applications and their Sync/Health status |
 | `argocd app get online-boutique-dev` | Full status for one Application |
 | `argocd app sync online-boutique-staging` | Manually sync staging (or `-prod`) — dev syncs automatically, staging/prod never do |
+| `argocd app wait online-boutique-staging --health --timeout 180` | Wait after deliberate staging promotion; prod example: `argocd app wait online-boutique-prod --health --timeout 300` |
 | `kubectl create namespace argo-rollouts && kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/download/v1.8.3/install.yaml` | Install the pinned Rollouts controller in the namespace targeted by its RBAC binding |
+| `kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=180s` | Confirm Rollouts controller startup before deploying Rollout resources |
 | `kubectl argo rollouts get rollout frontend -n online-boutique-dev --watch` | Watch the frontend canary step through 10% → 50% → 100% |
-| `kubectl argo rollouts abort frontend -n <ns>` then `kubectl argo rollouts undo frontend -n <ns>` | Abort a bad canary and roll it back |
+| `kubectl argo rollouts abort frontend -n online-boutique-dev` then `kubectl argo rollouts undo frontend -n online-boutique-dev` | Immediate canary recovery; also reconcile Git desired state so the unwanted revision is not reapplied |
+| `kubectl argo rollouts get rollout frontend -n online-boutique-dev` | Confirm health and weights after recovery |
+| `git log --oneline -5 -- helm-chart/values-dev.yaml` then `git revert <bad-commit-sha>` and `git push origin main` | Inspect and revert the actual bad change; requires ArgoCD to track `main`. Never replay historical demo SHAs blindly |
 | `kubectl scale deployment/adservice -n online-boutique-dev --replicas=5` | Manually drift a resource, to prove dev's `selfHeal` reverts it |
+| `kubectl -n online-boutique-dev get deployment adservice -w` | Watch replica counts after the optional drift demo; `Ctrl+C` stops watching |
+| `kubectl get pods -n monitoring` | Recheck monitoring during and after demonstrations |
+| `kubectl -n monitoring get services` | Confirm installed monitoring Service names before forwarding |
+| `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090` | Prometheus UI/readiness; run in its own terminal |
+| `kubectl -n monitoring port-forward svc/loki 3100:3100` | Loki HTTP endpoint; run in its own terminal |
+| `kubectl -n monitoring port-forward svc/tempo 3200:3200` | Tempo HTTP endpoint; run in its own terminal |
+| `curl -fsS http://127.0.0.1:3000/api/health` | Grafana health after starting its port-forward |
+| `curl -fsS http://127.0.0.1:9090/-/ready` | Prometheus readiness after starting its port-forward |
+| `curl -fsS http://127.0.0.1:3100/ready` | Loki readiness after starting its port-forward |
+| `curl -fsS http://127.0.0.1:3200/ready` | Tempo readiness after starting its port-forward |
+| `curl -fsS http://127.0.0.1:9093/-/ready` | Alertmanager readiness after starting the port-forward documented above; use `curl.exe` instead of `curl` in Windows PowerShell |
+| `kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/controller.yaml` | Install the optional Sealed Secrets controller; V4 has no real application secret to seal |
+| `kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=120s` | Confirm Sealed Secrets controller readiness |
 | `kubeseal --fetch-cert --controller-namespace kube-system --controller-name sealed-secrets-controller > sealed-secrets/pub-cert.pem` | Fetch the Sealed Secrets controller's public cert |
 | `kubeseal --format=yaml --cert sealed-secrets/pub-cert.pem < plain-secret.yaml > sealed.yaml` | Seal a plaintext Secret for safe commit |
+
+Full values-edit/commit promotion sequences: [environment promotion](docs/environment-promotion.md). Recovery details: [rollback](docs/rollback.md). Secret creation, sealing, and private-key backup: [Sealed Secrets guide](sealed-secrets/install/README.md). Never commit plaintext secrets or controller private keys. Controller uninstall commands are intentionally kept in the [installation guide](argocd/install/README.md#uninstall--reset), separate from everyday access commands.
 
 ---
 
