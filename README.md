@@ -577,7 +577,7 @@ flowchart TB
     FE["frontend\n(Argo Rollouts canary)"]:::service
     SVC["other 10 services\n+ redis-cart"]:::service
 
-    SEALED["Sealed Secrets\ncontroller"]:::secrets
+    SEALED["Sealed Secrets<br/>controller installed<br/>(workflow only)"]:::secrets
 
     GIT -->|"push to src/**"| CI
     CI -->|"opens PR:\nbump values-dev.yaml"| GIT
@@ -585,8 +585,8 @@ flowchart TB
     PROJ -.->|"restricts"| ARGOCD
 
     ARGOCD -->|"auto sync"| DEV
-    ARGOCD -.->|"manual sync\nargocd app sync"| STAGE
-    ARGOCD -.->|"manual sync\nargocd app sync"| PROD
+    ARGOCD -.->|"manual sync"| STAGE
+    ARGOCD -.->|"manual sync"| PROD
 
     DEV --> FE
     DEV --> SVC
@@ -595,9 +595,9 @@ flowchart TB
     PROD --> FE
     PROD --> SVC
 
-    SEALED -.->|"decrypts"| DEV
-    SEALED -.->|"decrypts"| STAGE
-    SEALED -.->|"decrypts"| PROD
+    SEALED -.-> DEV
+    SEALED -.-> STAGE
+    SEALED -.-> PROD
 
     classDef git fill:#c9d6e3,stroke:#4a6b8a,stroke-width:1.5px,color:#0a1a2b
     classDef ci fill:#a9d3a0,stroke:#5a9152,stroke-width:1.5px,color:#1a2b1c
