@@ -65,8 +65,8 @@ Built and verified end-to-end on a real AWS account: VPC → EKS cluster → ECR
 |---|---|---|---|
 | V1 | [`v1.0-eks-deployment`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v1.0-eks-deployment) | [Watch](https://youtu.be/qjnJab8mqcI) | VPC → EKS → ECR → Helm, GitHub Actions OIDC CI/CD, first live deploy |
 | V2 | [`v2.0-load-testing-autoscaling`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v2.0-load-testing-autoscaling) | [Watch](https://youtu.be/mjGCdLFqZ7k) | HPA, Karpenter node autoscaling, k6 load testing, Prometheus/Grafana observability |
-| V3 | [`v3.0-sre-observability`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v3.0-sre-observability) | Coming soon | Loki/Promtail logging, Tempo tracing, Prometheus alert rules, Alertmanager + Slack, runbooks, incident debug scripts — local minikube |
-| V4 | [`v4.0-gitops-argocd`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/tree/v4.0-gitops-argocd) | Coming soon | ArgoCD ApplicationSet across 3 namespaces, Sealed Secrets pattern, Argo Rollouts canary, GitOps CI, drift/rollback proof — local minikube v1.30 profile |
+| V3 | [`v3.0-sre-observability`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/releases/tag/v3.0-sre-observability) | [Watch](https://youtu.be/PBTLCKwlyho) | Loki/Promtail logging, Tempo tracing, Prometheus alert rules, Alertmanager + Slack, runbooks, incident debug scripts — local minikube |
+| V4 | [`v4.0-gitops-argocd`](https://github.com/ThinkWithOps/thinkwithops-online-boutique-production/tree/v4.0-gitops-argocd) | [Watch](https://youtu.be/2CJqoVwJEqY) | ArgoCD ApplicationSet across 3 namespaces, Sealed Secrets pattern, Argo Rollouts canary, GitOps CI, drift/rollback proof — local minikube v1.30 profile |
 
 ---
 
